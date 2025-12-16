@@ -53,6 +53,7 @@ const dogecoinDefaultNodeUri = 'dogecoin.stackwallet.com:50022';
 const baseDefaultNodeUri = 'base.nownodes.io';
 const arbitrumDefaultNodeUri = 'arbitrum.nownodes.io';
 const zcashDefaultNodeUri = 'zec-node.cakewallet.com:443';
+const minotariDefaultNodeUri = 'rpc.tari.com';
 
 Future<void> defaultSettingsMigration(
     {required int version,
@@ -682,6 +683,8 @@ String _getDefaultNodeUri(WalletType type) {
       return arbitrumDefaultNodeUri;
     case WalletType.zcash:
       return zcashDefaultNodeUri;
+    case WalletType.minotari:
+      return minotariDefaultNodeUri;
     case WalletType.banano:
     case WalletType.none:
       return '';
@@ -1091,6 +1094,7 @@ Future<void> checkCurrentNodes(
   final currentPolygonNodeId = sharedPreferences.getInt(PreferencesKey.currentPolygonNodeIdKey);
   final currentBaseNodeId = sharedPreferences.getInt(PreferencesKey.currentBaseNodeIdKey);
   final currentArbitrumNodeId = sharedPreferences.getInt(PreferencesKey.currentArbitrumNodeIdKey);
+  final currentMinotariNodeId = sharedPreferences.getInt(PreferencesKey.currentMinotariNodeIdKey);
   final currentNanoNodeId = sharedPreferences.getInt(PreferencesKey.currentNanoNodeIdKey);
   final currentNanoPowNodeId = sharedPreferences.getInt(PreferencesKey.currentNanoPowNodeIdKey);
   final currentDecredNodeId = sharedPreferences.getInt(PreferencesKey.currentDecredNodeIdKey);
@@ -1119,6 +1123,8 @@ Future<void> checkCurrentNodes(
       nodeSource.values.firstWhereOrNull((node) => node.key == currentBaseNodeId);
   final currentArbitrumNodeServer =
       nodeSource.values.firstWhereOrNull((node) => node.key == currentArbitrumNodeId);
+  final currentMinotariNodeServer =
+      nodeSource.values.firstWhereOrNull((node) => node.key == currentMinotariNodeId);
   final currentNanoNodeServer =
       nodeSource.values.firstWhereOrNull((node) => node.key == currentNanoNodeId);
   final currentDecredNodeServer =
@@ -1258,6 +1264,12 @@ Future<void> checkCurrentNodes(
     final node = Node(uri: zcashDefaultNodeUri, type: WalletType.zcash, useSSL: true);
     await nodeSource.add(node);
     await sharedPreferences.setInt(PreferencesKey.currentZcashNodeIdKey, node.key as int);
+  }
+
+  if (currentMinotariNodeServer == null) {
+    final node = Node(uri: minotariDefaultNodeUri, type: WalletType.minotari, useSSL: true);
+    await nodeSource.add(node);
+    await sharedPreferences.setInt(PreferencesKey.currentMinotariNodeIdKey, node.key as int);
   }
 }
 

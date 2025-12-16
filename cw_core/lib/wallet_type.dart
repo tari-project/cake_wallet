@@ -22,6 +22,7 @@ const walletTypes = [
   WalletType.base,
   WalletType.arbitrum,
   WalletType.zcash,
+  WalletType.minotari,
 ];
 
 @HiveType(typeId: WALLET_TYPE_TYPE_ID)
@@ -82,6 +83,9 @@ enum WalletType {
 
   @HiveField(18)
   zcash,
+
+  @HiveField(19)
+  minotari,
 }
 
 int serializeToInt(WalletType type) {
@@ -122,6 +126,8 @@ int serializeToInt(WalletType type) {
       return 16;
     case WalletType.zcash:
       return 17;
+    case WalletType.minotari:
+      return 18;
     case WalletType.none:
       return -1;
   }
@@ -165,6 +171,8 @@ WalletType deserializeFromInt(int raw) {
       return WalletType.arbitrum;
     case 17:
       return WalletType.zcash;
+    case 18:
+      return WalletType.minotari;
     default:
       throw Exception('Unexpected token: $raw for WalletType deserializeFromInt');
   }
@@ -208,6 +216,8 @@ String walletTypeToString(WalletType type) {
       return 'Arbitrum';
     case WalletType.zcash:
       return 'Zcash';
+    case WalletType.minotari:
+      return 'Minotari';
     case WalletType.none:
       return '';
   }
@@ -251,6 +261,8 @@ String walletTypeToDisplayName(WalletType type) {
       return 'Arbitrum (ARB)';
     case WalletType.zcash:
       return 'Zcash (ZEC)';
+    case WalletType.minotari:
+      return 'Minotari (XTM)';
     case WalletType.none:
       return '';
   }
@@ -295,6 +307,8 @@ WalletType? cryptoCurrencyToWalletType(CryptoCurrency type) {
       return WalletType.dogecoin;
     case CryptoCurrency.zec:
       return WalletType.zcash;
+    case CryptoCurrency.xtm:
+      return WalletType.minotari;
     default:
       return null;
   }
