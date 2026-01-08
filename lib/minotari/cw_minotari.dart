@@ -3,9 +3,9 @@ part of 'minotari.dart';
 class CWMinotari extends Minotari {
   @override
   List<String> getMinotariWordList(String language) {
-    // Minotari uses standard BIP39 wordlist (24 words)
-    // TODO: Import BIP39 wordlist
-    return [];
+    // Minotari only supports English wordlist (BIP39 English)
+    // Language parameter is ignored for consistency with other wallet types
+    return listWords();
   }
 
   @override
@@ -17,7 +17,6 @@ class CWMinotari extends Minotari {
   @override
   WalletCredentials createMinotariNewWalletCredentials({
     required String name,
-    String? mnemonic,
     WalletInfo? walletInfo,
   }) =>
       MinotariNewWalletCredentials(

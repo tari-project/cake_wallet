@@ -7,7 +7,8 @@ import 'package:cw_core/wallet_info.dart';
 import 'package:cw_core/wallet_service.dart';
 import 'package:cw_core/wallet_type.dart';
 import 'package:cw_minotari/minotari_wallet.dart';
-import 'package:cw_minotari/minotari_ffi_stub.dart';
+import 'package:cw_minotari/minotari_ffi.dart';
+import 'package:cw_minotari/src/rust/api/network.dart';
 import 'package:hive/hive.dart';
 
 class MinotariWalletService extends WalletService<
@@ -21,6 +22,10 @@ class MinotariWalletService extends WalletService<
 
   @override
   WalletType getType() => WalletType.minotari;
+
+  TariNetwork _getNetwork(bool? isTestnet) {
+    return isTestnet == true ? TariNetwork.esmeralda : TariNetwork.mainNet;
+  }
 
   @override
   Future<WalletBase> create(
@@ -36,17 +41,11 @@ class MinotariWalletService extends WalletService<
       type: getType(),
     );
 
-    final ffi = MinotariFfiStub(dataPath: path);
+    final ffi = MinotariFfi(dataPath: path);
 
-    // NOTE: Stubbed - actual wallet creation not implemented yet
-    // This will throw an UnimplementedError with user-friendly message
-    try {
-      final mnemonic = _generateMnemonic();
-      await ffi.createFromMnemonic(mnemonic);
-    } catch (e) {
-      // Re-throw the UnimplementedError to show user the message
-      rethrow;
-    }
+    // Create wallet
+    final network = _getNetwork(isTestnet);
+    await ffi.create(network: network);
 
     // Get and set the wallet address
     final address = await ffi.getAddress();
@@ -128,14 +127,11 @@ class MinotariWalletService extends WalletService<
       type: getType(),
     );
 
-    final ffi = MinotariFfiStub(dataPath: path);
+    final ffi = MinotariFfi(dataPath: path);
 
-    // NOTE: Stubbed - actual wallet restoration not implemented yet
-    try {
-      await ffi.restore(credentials.mnemonic);
-    } catch (e) {
-      rethrow;
-    }
+    // Restore wallet from mnemonic
+    final network = _getNetwork(isTestnet);
+    await ffi.restore(credentials.mnemonic, network: network);
 
     // Get and set the wallet address
     final address = await ffi.getAddress();
@@ -164,12 +160,6 @@ class MinotariWalletService extends WalletService<
     } catch (_) {
       return false;
     }
-  }
-
-  /// Generate a 24-word BIP39 mnemonic (stubbed)
-  String _generateMnemonic() {
-    // Placeholder mnemonic - in real implementation, use BIP39 library
-    return 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
   }
 }
 
