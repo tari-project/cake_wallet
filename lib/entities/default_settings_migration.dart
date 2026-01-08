@@ -569,6 +569,16 @@ Future<void> defaultSettingsMigration(
             type: WalletType.zcash,
             currentNodePreferenceKey: PreferencesKey.currentZcashNodeIdKey,
           );
+        case 56:
+          await addWalletNodeList(nodes: nodes, type: WalletType.minotari);
+          await _changeDefaultNode(
+            nodes: nodes,
+            sharedPreferences: sharedPreferences,
+            type: WalletType.minotari,
+            currentNodePreferenceKey: PreferencesKey.currentMinotariNodeIdKey,
+          );
+          break;
+
         default:
           break;
       }
