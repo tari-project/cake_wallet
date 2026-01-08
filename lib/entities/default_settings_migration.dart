@@ -560,6 +560,15 @@ Future<void> defaultSettingsMigration(
          case 54:
           await _backupWowneroSeeds(havenSeedStore);
           break;
+        case 55:
+          await addWalletNodeList(nodes: nodes, type: WalletType.minotari);
+          await _changeDefaultNode(
+            nodes: nodes,
+            sharedPreferences: sharedPreferences,
+            type: WalletType.minotari,
+            currentNodePreferenceKey: PreferencesKey.currentMinotariNodeIdKey,
+          );
+          break;
 
         default:
           break;
