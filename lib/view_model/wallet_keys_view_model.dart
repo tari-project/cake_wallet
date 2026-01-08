@@ -205,6 +205,9 @@ abstract class WalletKeysViewModelBase with Store {
         ]);
         break;
       case WalletType.minotari:
+        // Minotari uses BIP39 24-word mnemonic
+        // Seed will be displayed via the seed property once getMnemonic() FFI is implemented
+        break;
       case WalletType.none:
       case WalletType.haven:
         break;
@@ -307,6 +310,8 @@ abstract class WalletKeysViewModelBase with Store {
         return 'dogecoin-wallet';
       case WalletType.zcash:
         return 'zcash-wallet';
+      case WalletType.minotari:
+        return 'minotari-wallet';
       default:
         throw Exception('Unexpected wallet type: ${_wallet.type.toString()} for wallet keys');
     }
