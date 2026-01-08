@@ -29,11 +29,13 @@ class CWMinotari extends Minotari {
     required String name,
     required String mnemonic,
     required int height,
+    String? passphrase,
   }) =>
       MinotariRestoreWalletFromSeedCredentials(
         name: name,
         mnemonic: mnemonic,
         height: height,
+        passphrase: passphrase,
       );
 
   @override

@@ -129,9 +129,13 @@ class MinotariWalletService extends WalletService<
 
     final ffi = MinotariFfi(dataPath: path);
 
-    // Restore wallet from mnemonic
+    // Restore wallet from mnemonic with passphrase
     final network = _getNetwork(isTestnet);
-    await ffi.restore(credentials.mnemonic, network: network);
+    await ffi.restore(
+      credentials.mnemonic,
+      passphrase: credentials.passphrase ?? '',
+      network: network,
+    );
 
     // Get and set the wallet address
     final address = await ffi.getAddress();
@@ -174,7 +178,13 @@ class MinotariRestoreWalletFromSeedCredentials extends WalletCredentials {
     required this.mnemonic,
     required int height,
     WalletInfo? walletInfo,
-  }) : super(name: name, height: height, walletInfo: walletInfo);
+    String? passphrase,
+  }) : super(
+         name: name,
+         height: height,
+         walletInfo: walletInfo,
+         passphrase: passphrase,
+       );
 
   final String mnemonic;
 }
