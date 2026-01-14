@@ -5,6 +5,7 @@ import 'package:cake_wallet/entities/balance_display_mode.dart';
 import 'package:cake_wallet/entities/fiat_currency.dart';
 import 'package:cake_wallet/ethereum/ethereum.dart';
 import 'package:cake_wallet/generated/i18n.dart';
+import 'package:cake_wallet/minotari/minotari.dart';
 import 'package:cake_wallet/nano/nano.dart';
 import 'package:cake_wallet/polygon/polygon.dart';
 import 'package:cake_wallet/reactions/wallet_connect.dart';
@@ -251,7 +252,9 @@ class TransactionListItem extends ActionListItem with Keyable {
             price: price);
         break;
       case WalletType.minotari:
-      /// TODO :Add Minotari fiat amount calculation when available
+        amount = calculateFiatAmountRaw(
+            cryptoAmount: minotari!.formatterMinotariAmountToDouble(amount: transaction.amount),
+            price: price);
         break;
       case WalletType.none:
       case WalletType.banano:
