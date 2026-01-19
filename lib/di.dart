@@ -1230,7 +1230,7 @@ Future<void> setup({
       case WalletType.arbitrum:
         return arbitrum!.createArbitrumWalletService(SettingsStoreBase.walletPasswordDirectInput);
       case WalletType.minotari:
-        return minotari!.createMinotariWalletService(_unspentCoinsInfoSource);
+        return minotari!.createMinotariWalletService();
       case WalletType.haven:
         return HavenWalletService();
       case WalletType.none:
