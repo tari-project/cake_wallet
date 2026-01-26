@@ -123,7 +123,8 @@ abstract class FeesViewModelBase extends WalletChangeListenerViewModel with Stor
       wallet.type != WalletType.banano &&
       wallet.type != WalletType.solana &&
       wallet.type != WalletType.tron &&
-      wallet.type != WalletType.arbitrum;
+      wallet.type != WalletType.arbitrum &&
+      wallet.type != WalletType.minotari;
 
   @computed
   bool get isElectrumWallet =>

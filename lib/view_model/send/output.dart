@@ -12,6 +12,7 @@ import 'package:cake_wallet/entities/parse_address_from_domain.dart';
 import 'package:cake_wallet/entities/parsed_address.dart';
 import 'package:cake_wallet/ethereum/ethereum.dart';
 import 'package:cake_wallet/generated/i18n.dart';
+import 'package:cake_wallet/minotari/minotari.dart';
 import 'package:cake_wallet/monero/monero.dart';
 import 'package:cake_wallet/polygon/polygon.dart';
 import 'package:cake_wallet/reactions/wallet_connect.dart';
@@ -136,7 +137,8 @@ abstract class OutputBase with Store {
                 .formatterParseAmount(amount: _cryptoAmount, currency: cryptoCurrencyHandler());
             break;
           case WalletType.minotari:
-            /// TODO :Add Minotari amount formatter when available
+            _amount = minotari!.formatterMinotariParseAmount(amount: _cryptoAmount);
+            break;
           case WalletType.none:
           case WalletType.haven:
           case WalletType.nano:
@@ -252,6 +254,10 @@ abstract class OutputBase with Store {
         /// end EVMs
 
         case WalletType.minotari:
+          // Minotari has fixed fee (no priority selection), similar to Solana
+          estimatedFee = minotari!.getMinotariEstimatedFee(_wallet)?.toString() ?? '0.0';
+          break;
+
         case WalletType.haven:
         case WalletType.nano:
         case WalletType.banano:
