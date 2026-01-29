@@ -7,6 +7,25 @@
 set -e
 cd "$(dirname "$0")"
 
+# Usage: ./build_minotari.sh [esmeralda|mainnet]
+# Defaults to mainnet if no argument is provided.
+
+NETWORK_ARG=$1
+echo "Configuring Minotari for network argument: ${NETWORK_ARG}"
+
+case "${NETWORK_ARG}" in
+  *esme* | *esmeralda* )
+    echo "Selected: Esmeralda (Testnet)"
+    export TARI_NETWORK=esme
+    export TARI_TARGET_NETWORK=testnet
+    ;;
+  * )
+    echo "Selected: Mainnet (Default)"
+    export TARI_NETWORK=mainnet
+    export TARI_TARGET_NETWORK=mainnet
+    ;;
+esac
+
 CW_ROOT=$(realpath ../..);
 CW_MINOTARI_DIR="${CW_ROOT}/cw_minotari"
 RUST_DIR="${CW_MINOTARI_DIR}/rust"
@@ -80,4 +99,4 @@ fi
 rm -rf "${SIMULATOR_FAT_DIR}"
 
 echo ""
-echo "iOS Minotari library build complete!"
+echo "iOS Minotari library build complete for ${TARI_NETWORK}!"
