@@ -100,6 +100,24 @@ else
   echo "⏭️  Skipping Android build (ANDROID_HOME or ANDROID_NDK_VERSION not set)"
 fi
 
+#######################################
+# Build iOS xcframework
+#######################################
+
+# Only build iOS libraries on macOS
+if [ "$(uname)" = "Darwin" ]; then
+  echo "🍎 Building iOS xcframework..."
+  (
+    cd "$SCRIPTS_DIR/ios" || exit 1
+    if [ -f "build_minotari.sh" ]; then
+      ./build_minotari.sh
+    else
+      echo "⚠️  build_minotari.sh not found, skipping iOS build"
+    fi
+  )
+else
+  echo "⏭️  Skipping iOS build (not on macOS)"
+fi
 
 #######################################
 # Done
