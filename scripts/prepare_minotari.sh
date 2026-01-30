@@ -104,8 +104,8 @@ fi
 # Build iOS xcframework
 #######################################
 
-# Only build iOS libraries on macOS
-if [ "$(uname)" = "Darwin" ]; then
+# Only build iOS libraries is xcodebuild is installed
+if command -v xcodebuild &> /dev/null; then
   echo "🍎 Building iOS xcframework..."
   (
     cd "$SCRIPTS_DIR/ios" || exit 1
@@ -116,7 +116,7 @@ if [ "$(uname)" = "Darwin" ]; then
     fi
   )
 else
-  echo "⏭️  Skipping iOS build (not on macOS)"
+  echo "⏭️  Skipping iOS build (xcodebuild not installed)"
 fi
 
 #######################################
