@@ -110,7 +110,11 @@ if command -v xcodebuild &> /dev/null; then
   (
     cd "$SCRIPTS_DIR/ios" || exit 1
     if [ -f "build_minotari.sh" ]; then
-      ./build_minotari.sh
+      if ./build_minotari.sh; then
+        echo "✅ iOS xcframework prepared"
+      else
+        echo "⚠️  iOS build failed"
+      fi
     else
       echo "⚠️  build_minotari.sh not found, skipping iOS build"
     fi
