@@ -80,17 +80,13 @@ write_info_plist() {
     local target="$3"
     local plist_path="${framework_bundle}/Info.plist"
 
-    local platform min_os_version dtplatformname dtsdkname
+    local platform min_os_version
 
     if [[ "$target" == "ios-simulator" ]]; then
         platform="iPhoneSimulator"
-        dtplatformname="iphonesimulator"
-        dtsdkname="iphonesimulator17.4"
         min_os_version="12.0"
     elif [[ "$target" == "ios" ]]; then
         platform="iPhoneOS"
-        dtplatformname="iphoneos"
-        dtsdkname="iphoneos17.4"
         min_os_version="12.0"
     else
         echo "Unknown target: $target"
@@ -102,10 +98,6 @@ write_info_plist() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>BuildMachineOSBuild</key>
-    <string>23F79</string>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
     <key>CFBundleExecutable</key>
     <string>${framework_name}</string>
     <key>CFBundleIdentifier</key>
@@ -126,20 +118,6 @@ write_info_plist() {
     </array>
     <key>DTCompiler</key>
     <string>com.apple.compilers.llvm.clang.1_0</string>
-    <key>DTPlatformName</key>
-    <string>${dtplatformname}</string>
-    <key>DTPlatformVersion</key>
-    <string>17.4</string>
-    <key>DTSDKBuild</key>
-    <string>21E213</string>
-    <key>DTSDKName</key>
-    <string>${dtsdkname}</string>
-    <key>DTSDKVersion</key>
-    <string>17.4</string>
-    <key>DTXcode</key>
-    <string>1530</string>
-    <key>DTXcodeBuild</key>
-    <string>15E204a</string>
     <key>MinimumOSVersion</key>
     <string>${min_os_version}</string>
     <key>UIDeviceFamily</key>
