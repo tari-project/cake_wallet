@@ -182,17 +182,19 @@ create_framework() {
       ar x "$archive_path"
 
       # Link object files into a dynamic library
+      local sdk
+      local min_os_flag
       if [[ "$target" == "ios" ]]; then
-          xcrun -sdk iphoneos clang -dynamiclib -arch "${arch}" -mios-version-min=12 \
-              -install_name "@rpath/${framework_name}.framework/${framework_name}" \
-              -framework CoreFoundation -framework Security -lresolv -lc++ -lz -lsqlite3 \
-              -o "${framework_bundle}/${framework_name}" ./*.o
+          sdk="iphoneos"
+          min_os_flag="-mios-version-min=12"
       else
-          xcrun -sdk iphonesimulator clang -dynamiclib -arch "${arch}" -mios-simulator-version-min=12 \
-              -install_name "@rpath/${framework_name}.framework/${framework_name}" \
-              -framework CoreFoundation -framework Security -lresolv -lc++ -lz -lsqlite3 \
-              -o "${framework_bundle}/${framework_name}" ./*.o
+          sdk="iphonesimulator"
+          min_os_flag="-mios-simulator-version-min=12"
       fi
+      xcrun -sdk "${sdk}" clang -dynamiclib -arch "${arch}" "${min_os_flag}" \
+          -install_name "@rpath/${framework_name}.framework/${framework_name}" \
+          -framework CoreFoundation -framework Security -lresolv -lc++ -lz -lsqlite3 \
+          -o "${framework_bundle}/${framework_name}" ./*.o
     popd
 
     echo "Created binary: ${framework_bundle}/${framework_name}"
