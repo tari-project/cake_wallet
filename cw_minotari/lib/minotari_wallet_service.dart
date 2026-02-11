@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:cw_core/encryption_file_utils.dart';
 import 'package:cw_core/pathForWallet.dart';
 import 'package:cw_core/wallet_base.dart';
@@ -13,6 +14,23 @@ import 'package:cw_minotari/src/rust/api/network.dart';
 
 /// Encryption utils for Minotari - always use XChaCha20 (no legacy wallet support needed)
 final _encryptionFileUtils = encryptionFileUtilsFor(true);
+
+extension _PassphraseExtension on String? {
+  String getOrGenerateRandom() {
+    if (this != null && this!.isNotEmpty) return this!;
+
+    const allowedChars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#\$%-=_+[]{}|;:,.<>?';
+    final random = Random.secure();
+    final buffer = StringBuffer();
+
+    for (int i = 0; i < 32; i++) {
+      buffer.write(allowedChars[random.nextInt(allowedChars.length)]);
+    }
+
+    return buffer.toString();
+  }
+}
 
 class MinotariWalletService extends WalletService<
     MinotariNewWalletCredentials,
@@ -39,7 +57,7 @@ class MinotariWalletService extends WalletService<
     );
 
     final ffi = MinotariFfi(dataPath: path, walletName: credentials.name);
-    final passphrase = credentials.passphrase ?? '';
+    final passphrase = credentials.passphrase.getOrGenerateRandom();
 
     // Create wallet - get WalletCreationDetails with seed words
     final network = _getNetwork(isTestnet);
@@ -160,7 +178,6 @@ class MinotariWalletService extends WalletService<
     throw UnimplementedError('Minotari wallets use mnemonic-based restoration');
   }
 
-  /// TODO : Need to generate a random passphrase if none is provided
   @override
   Future<WalletBase> restoreFromSeed(
     MinotariRestoreWalletFromSeedCredentials credentials, {
@@ -172,7 +189,7 @@ class MinotariWalletService extends WalletService<
     );
 
     final ffi = MinotariFfi(dataPath: path, walletName: credentials.name);
-    final passphrase = credentials.passphrase ?? '';
+    final passphrase = credentials.passphrase.getOrGenerateRandom();
     final walletInfo = credentials.walletInfo!;
 
     // Restore wallet from mnemonic - get WalletCreationDetails with seed words
