@@ -1,6 +1,6 @@
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_minotari/src/rust/api/wallet.dart'
-    show WalletCreationDetails, createWallet, restoreWallet;
+    show WalletCreationDetails, createWallet, restoreWallet, importViewOnlyWallet, renameWallet;
 import 'package:cw_minotari/src/rust/api/balance.dart' as balance;
 import 'package:cw_minotari/src/rust/api/address.dart' as address;
 import 'package:cw_minotari/src/rust/api/db.dart';
@@ -118,6 +118,37 @@ class MinotariFfi {
     return details;
   }
 
+  /// Import a view-only wallet from keys
+  /// [viewPrivateKeyHex] - the private view key in hex
+  /// [spendPublicKeyHex] - the public spend key in hex
+  /// [birthday] - block height to start scanning from (like restore height)
+  /// [passphrase] - BIP39 passphrase for key derivation
+  Future<WalletCreationDetails> importViewOnly({
+    required String viewPrivateKeyHex,
+    required String spendPublicKeyHex,
+    required int birthday,
+    required String passphrase,
+    required TariNetwork network,
+  }) async {
+    await _ensureRustLibInitialized();
+
+    await initializeDatabase(path: dataPath);
+
+    final details = await importViewOnlyWallet(
+      walletName: walletName,
+      viewPrivateKeyHex: viewPrivateKeyHex,
+      spendPublicKeyHex: spendPublicKeyHex,
+      birthday: birthday,
+      passphrase: passphrase,
+      network: network,
+    );
+
+    _networkInternal = network;
+    _isInitialized = true;
+
+    return details;
+  }
+
   /// Get wallet address
   /// [passphrase] is the BIP39 passphrase for seed derivation
   Future<String> getAddress({required String passphrase}) async {
@@ -153,7 +184,7 @@ class MinotariFfi {
     required String baseNodeAddress,
     required String passphrase,
     bool continuous = false,
-    int batchSize = 1000,
+    int batchSize = 25,
     int pollIntervalSeconds = 60,
     int requiredConfirmations = 3, // Default to 3 confirmations for transaction discovery
   }) {

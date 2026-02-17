@@ -39,6 +39,8 @@ abstract class MinotariWalletBase
     required String password,
     required this.encryptionFileUtils,
     this.passphrase,
+    this.viewPrivateKeyHex,
+    this.spendPublicKeyHex,
   })  : _mnemonic = mnemonic,
         _password = password,
         balance = ObservableMap.of({
@@ -91,8 +93,16 @@ abstract class MinotariWalletBase
   @override
   final String? passphrase;
 
+  final String? viewPrivateKeyHex;
+  final String? spendPublicKeyHex;
+
   @override
-  WalletKeysData get walletKeysData => WalletKeysData(mnemonic: _mnemonic, passphrase: passphrase);
+  WalletKeysData get walletKeysData => WalletKeysData(
+    mnemonic: _mnemonic,
+    passphrase: passphrase,
+    scanSecret: viewPrivateKeyHex,
+    spendPubkey: spendPublicKeyHex,
+  );
 
   @override
   Object get keys => {};

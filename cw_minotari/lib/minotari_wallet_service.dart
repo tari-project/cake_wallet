@@ -65,7 +65,7 @@ class MinotariWalletService extends WalletService<
     final walletDetails = await ffi.create(network, passphrase: passphrase);
 
     // Extract seed words from WalletCreationDetails
-    final seedWords = walletDetails.seedWords.words;
+    final seedWords = walletDetails.seedWords!.words;
     final mnemonic = seedWords.join(' ');
 
     // Save network to wallet info
@@ -125,6 +125,8 @@ class MinotariWalletService extends WalletService<
       passphrase: passphrase,
       password: password,
       encryptionFileUtils: _encryptionFileUtils,
+      viewPrivateKeyHex: keysData.scanSecret,
+      spendPublicKeyHex: keysData.spendPubkey,
     );
     await wallet.init();
 
@@ -174,8 +176,49 @@ class MinotariWalletService extends WalletService<
     MinotariRestoreWalletFromKeysCredentials credentials, {
     bool? isTestnet,
   }) async {
-    // Minotari uses mnemonic-based restoration
-    throw UnimplementedError('Minotari wallets use mnemonic-based restoration');
+    final path = await pathForWallet(
+      name: credentials.name,
+      type: getType(),
+    );
+
+    final ffi = MinotariFfi(dataPath: path, walletName: credentials.name);
+    final passphrase = credentials.passphrase.getOrGenerateRandom();
+    final walletInfo = credentials.walletInfo!;
+    final network = _getNetwork(isTestnet);
+
+    await ffi.importViewOnly(
+      viewPrivateKeyHex: credentials.viewPrivateKeyHex,
+      spendPublicKeyHex: credentials.spendPublicKeyHex,
+      birthday: credentials.height ?? 0,
+      passphrase: passphrase,
+      network: network,
+    );
+
+    walletInfo.network = network.name;
+    await walletInfo.save();
+
+    // Get and set the wallet address
+    final address = await ffi.getAddress(passphrase: passphrase);
+
+    // Dispose the temporary FFI - wallet.init() will create its own
+    await ffi.dispose();
+
+    final derivationInfo = await walletInfo.getDerivationInfo();
+    final wallet = MinotariWallet(
+      walletInfo,
+      derivationInfo,
+      password: credentials.password!,
+      passphrase: passphrase,
+      encryptionFileUtils: _encryptionFileUtils,
+      viewPrivateKeyHex: credentials.viewPrivateKeyHex,
+      spendPublicKeyHex: credentials.spendPublicKeyHex,
+    );
+    wallet.walletAddresses.setAddress(address);
+
+    await wallet.init();
+    await wallet.save();
+
+    return wallet;
   }
 
   @override
@@ -283,9 +326,19 @@ class MinotariRestoreWalletFromKeysCredentials extends WalletCredentials {
   MinotariRestoreWalletFromKeysCredentials({
     required String name,
     required String password,
-    required this.language,
+    required this.viewPrivateKeyHex,
+    required this.spendPublicKeyHex,
+    required int birthday,
+    String? passphrase,
     WalletInfo? walletInfo,
-  }) : super(name: name, password: password, walletInfo: walletInfo);
+  }) : super(
+          name: name,
+          password: password,
+          height: birthday,
+          walletInfo: walletInfo,
+          passphrase: passphrase,
+        );
 
-  final String language;
+  final String viewPrivateKeyHex;
+  final String spendPublicKeyHex;
 }
