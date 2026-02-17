@@ -142,6 +142,37 @@ class MinotariFfi {
   }) async {
     await _ensureRustLibInitialized();
 
+    await initializeDatabase(path: dataPath);
+
+    final details = await importViewOnlyWallet(
+      walletName: walletName,
+      viewPrivateKeyHex: viewPrivateKeyHex,
+      spendPublicKeyHex: spendPublicKeyHex,
+      birthday: birthday,
+      passphrase: passphrase,
+      network: network,
+    );
+
+    _networkInternal = network;
+    _isInitialized = true;
+
+    return details;
+  }
+
+  /// Import a view-only wallet from keys
+  /// [viewPrivateKeyHex] - the private view key in hex
+  /// [spendPublicKeyHex] - the public spend key in hex
+  /// [birthday] - block height to start scanning from (like restore height)
+  /// [passphrase] - BIP39 passphrase for key derivation
+  Future<WalletCreationDetails> importViewOnly({
+    required String viewPrivateKeyHex,
+    required String spendPublicKeyHex,
+    required int birthday,
+    required String passphrase,
+    required TariNetwork network,
+  }) async {
+    await _ensureRustLibInitialized();
+
     await _ensureDbInitialized(path: dataPath);
 
     final details = await importViewOnlyWallet(
