@@ -142,7 +142,7 @@ class MinotariFfi {
   }) async {
     await _ensureRustLibInitialized();
 
-    await initializeDatabase(path: dataPath);
+    await _ensureDbInitialized(path: dataPath);
 
     final details = await importViewOnlyWallet(
       walletName: walletName,
