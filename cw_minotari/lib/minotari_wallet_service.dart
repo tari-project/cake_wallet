@@ -51,12 +51,9 @@ class MinotariWalletService extends WalletService<
     MinotariNewWalletCredentials credentials, {
     bool? isTestnet,
   }) async {
-    final path = await pathForWallet(
-      name: credentials.name,
-      type: getType(),
-    );
+    final dbPath = '${await pathForWalletTypeDir(type: getType())}/wallet.db';
 
-    final ffi = MinotariFfi(dataPath: path, walletName: credentials.name);
+    final ffi = MinotariFfi(dataPath: dbPath, walletName: credentials.name);
     final passphrase = credentials.passphrase.getOrGenerateRandom();
 
     // Create wallet - get WalletCreationDetails with seed words
@@ -166,6 +163,7 @@ class MinotariWalletService extends WalletService<
 
     await currentWallet.renameWalletFiles(newName);
 
+    currentWalletInfo.id = WalletBase.idFor(newName, getType());
     currentWalletInfo.name = newName;
 
     await currentWalletInfo.save();
@@ -176,12 +174,9 @@ class MinotariWalletService extends WalletService<
     MinotariRestoreWalletFromKeysCredentials credentials, {
     bool? isTestnet,
   }) async {
-    final path = await pathForWallet(
-      name: credentials.name,
-      type: getType(),
-    );
+    final dbPath = '${await pathForWalletTypeDir(type: getType())}/wallet.db';
 
-    final ffi = MinotariFfi(dataPath: path, walletName: credentials.name);
+    final ffi = MinotariFfi(dataPath: dbPath, walletName: credentials.name);
     final passphrase = credentials.passphrase.getOrGenerateRandom();
     final walletInfo = credentials.walletInfo!;
     final network = _getNetwork(isTestnet);
@@ -226,12 +221,9 @@ class MinotariWalletService extends WalletService<
     MinotariRestoreWalletFromSeedCredentials credentials, {
     bool? isTestnet,
   }) async {
-    final path = await pathForWallet(
-      name: credentials.name,
-      type: getType(),
-    );
+    final dbPath = '${await pathForWalletTypeDir(type: getType())}/wallet.db';
 
-    final ffi = MinotariFfi(dataPath: path, walletName: credentials.name);
+    final ffi = MinotariFfi(dataPath: dbPath, walletName: credentials.name);
     final passphrase = credentials.passphrase.getOrGenerateRandom();
     final walletInfo = credentials.walletInfo!;
 
@@ -286,8 +278,8 @@ class MinotariWalletService extends WalletService<
   @override
   Future<bool> isWalletExit(String name) async {
     try {
-      final path = await pathForWallet(name: name, type: getType());
-      return File(path).existsSync();
+      final typeDir = await pathForWalletTypeDir(type: getType());
+      return File('$typeDir/$name/$name.keys').existsSync();
     } catch (_) {
       return false;
     }
