@@ -804,7 +804,9 @@ class SendCardState extends State<SendCard> with AutomaticKeepAliveClientMixin<S
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Text(
-                                      '${output.estimatedFee} ${sendViewModel.currencySymbol}',
+                                      sendViewModel.walletType == WalletType.minotari && output.estimatedFee.sign <= 0
+                                          ? '—'
+                                          : '${output.estimatedFee} ${sendViewModel.currencySymbol}',
                                       style: Theme.of(context).textTheme.bodySmall!.copyWith(
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -814,7 +816,9 @@ class SendCardState extends State<SendCard> with AutomaticKeepAliveClientMixin<S
                                       child: sendViewModel.isFiatDisabled
                                           ? const SizedBox(height: 14)
                                           : Text(
-                                              '${output.estimatedFeeFiatAmount} ${sendViewModel.fiat.title}',
+                                              sendViewModel.walletType == WalletType.minotari && output.estimatedFee.sign <= 0
+                                                  ? '—'
+                                                  : '${output.estimatedFeeFiatAmount} ${sendViewModel.fiat.title}',
                                               style:
                                                   Theme.of(context).textTheme.bodySmall!.copyWith(
                                                         fontWeight: FontWeight.w600,

@@ -9,17 +9,25 @@ import 'package:cake_wallet/reactions/wallet_connect.dart';
 import 'package:cake_wallet/store/settings_store.dart';
 import 'package:cake_wallet/utils/feature_flag.dart';
 import 'package:cake_wallet/utils/tor.dart';
-import 'package:cake_wallet/view_model/wallet_list/wallet_list_item.dart';
-import 'package:cake_wallet/view_model/wallet_list/wallet_list_view_model.dart';
+import 'package:cw_core/wallet_info.dart';
 import 'package:cw_core/sync_status.dart';
 import 'package:cw_core/transaction_direction.dart';
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_core/wallet_type.dart';
+import 'package:cw_core/wallet_base.dart';
+import 'package:cake_wallet/minotari/minotari.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cake_wallet/evm/evm.dart';
 
 class BackgroundSync {
+  BackgroundSync({bool Function()? isCancelled, Future<List<WalletInfo>> Function()? loadWallets})
+      : isCancelled = isCancelled ?? (() => false),
+        loadWallets = loadWallets ?? WalletInfo.getAll;
+
+  final bool Function() isCancelled;
+  final Future<List<WalletInfo>> Function() loadWallets;
+
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
 
@@ -107,14 +115,21 @@ class BackgroundSync {
 
   Future<void> _syncWallets() async {
     final walletLoadingService = getIt.get<WalletLoadingService>();
-    final walletListViewModel = getIt.get<WalletListViewModel>();
     final settingsStore = getIt.get<SettingsStore>();
 
-    final List<WalletListItem> moneroWallets = walletListViewModel.wallets
-        .where((element) => !element.isHardware)
+    if (isCancelled()) return;
+    // The UI view model starts asynchronous sorting/list refreshes in its
+    // constructor. A headless job needs a stable DB snapshot, without UI writes.
+    final moneroWallets = (await loadWallets())
+        .where((element) => !element.isHardwareWallet)
         .where((element) => ![WalletType.haven, WalletType.decred].contains(element.type))
         .toList();
     for (int i = 0; i < moneroWallets.length; i++) {
+      if (isCancelled()) return;
+      if (moneroWallets[i].type == WalletType.minotari) {
+        await _syncMinotari(moneroWallets[i], walletLoadingService, settingsStore);
+        continue;
+      }
       final wallet = await walletLoadingService.load(moneroWallets[i].type, moneroWallets[i].name,
           isBackground: true);
       int syncedTicks = 0;
@@ -125,6 +140,7 @@ class BackgroundSync {
       inner:
       while (true) {
         await Future.delayed(const Duration(seconds: 1));
+        if (isCancelled()) break inner;
         final syncStatus = wallet.syncStatus;
         final progress = syncStatus.progress();
         if (syncStatus is ConnectedSyncStatus ||
@@ -194,37 +210,76 @@ class BackgroundSync {
           }
         }
       }
-      final txs = wallet.transactionHistory;
-      final sortedTxs = txs.transactions.values.toList()..sort((a, b) => a.date.compareTo(b.date));
-      final sharedPreferences = await SharedPreferences.getInstance();
-      for (final tx in sortedTxs) {
-        final lastTriggerString =
-            sharedPreferences.getString(PreferencesKey.backgroundSyncLastTrigger(wallet.name));
-        final lastTriggerDate =
-            lastTriggerString != null ? DateTime.parse(lastTriggerString) : DateTime.now();
-        final keys = sharedPreferences.getKeys();
-        if (tx.date.isBefore(lastTriggerDate)) {
-          printV(
-              "w: ${wallet.name}, tx: ${tx.date} is before $lastTriggerDate (lastTriggerString: $lastTriggerString) (k: ${keys.length})");
-          continue;
-        }
-        await sharedPreferences.setString(PreferencesKey.backgroundSyncLastTrigger(wallet.name),
-            tx.date.add(Duration(minutes: 1)).toIso8601String());
-        final action = tx.additionalInfo['isAutoShield'] == true
-            ? "Autoshield"
-            : tx.direction == TransactionDirection.incoming
-                ? "Received"
-                : "Sent";
-        if (sharedPreferences.getBool(PreferencesKey.backgroundSyncNotificationsEnabled) ?? false) {
-          await showNotification(
-              "$action ${wallet.currency.fullName} in ${wallet.name}", "${tx.amount.toString()}");
-        }
-        printV(
-            "${wallet.currency.fullName} in ${wallet.name}: TX: ${tx.date} ${tx.amount} ${tx.direction}");
-      }
+      if (!isCancelled()) await _notifyWallet(wallet);
       wallet.id;
       await wallet.stopBackgroundSync(await keyService.getWalletPassword(walletName: wallet.name));
       await wallet.close(shouldCleanup: true);
+    }
+  }
+
+  Future<void> _syncMinotari(
+      WalletInfo item, WalletLoadingService loading, SettingsStore settings) async {
+    // The lease is acquired before opening the native DB in this engine.
+    if (minotari == null || !await minotari!.beginBackgroundSync()) return;
+    WalletBase? wallet;
+    Timer? cancellation;
+    try {
+      if (isCancelled()) return;
+      wallet = await loading.load(item.type, item.name, isBackground: true);
+      if (isCancelled()) return;
+      await wallet.connectToNode(node: settings.getCurrentNode(item.type));
+      final stopped = Completer<void>();
+      cancellation = Timer.periodic(const Duration(milliseconds: 250), (_) {
+        if (isCancelled() && !stopped.isCompleted) {
+          stopped.completeError(StateError("Background sync cancelled"));
+        }
+      });
+      await Future.any([wallet.startBackgroundSync(), stopped.future]);
+      // XTM progress can be 100% before final native events/history are drained.
+      if (wallet.syncStatus is! SyncedSyncStatus) {
+        throw StateError("Minotari scan did not finish");
+      }
+      if (!isCancelled()) await _notifyWallet(wallet);
+    } catch (_) {
+      printV("Minotari background pass stopped; a later job can retry.");
+    } finally {
+      cancellation?.cancel();
+      try {
+        if (wallet != null) await wallet.close(shouldCleanup: true);
+      } finally {
+        await minotari!.endBackgroundSync();
+      }
+    }
+  }
+
+  Future<void> _notifyWallet(WalletBase wallet) async {
+    final txs = wallet.transactionHistory;
+    final sortedTxs = txs.transactions.values.toList()..sort((a, b) => a.date.compareTo(b.date));
+    final sharedPreferences = await SharedPreferences.getInstance();
+    for (final tx in sortedTxs) {
+      final lastTriggerString =
+          sharedPreferences.getString(PreferencesKey.backgroundSyncLastTrigger(wallet.name));
+      final lastTriggerDate =
+          lastTriggerString != null ? DateTime.parse(lastTriggerString) : DateTime.now();
+      final keys = sharedPreferences.getKeys();
+      if (tx.date.isBefore(lastTriggerDate)) {
+        printV(
+            "w: ${wallet.name}, tx: ${tx.date} is before $lastTriggerDate (lastTriggerString: $lastTriggerString) (k: ${keys.length})");
+        continue;
+      }
+      await sharedPreferences.setString(PreferencesKey.backgroundSyncLastTrigger(wallet.name),
+          tx.date.add(Duration(minutes: 1)).toIso8601String());
+      final action = tx.additionalInfo['isAutoShield'] == true
+          ? "Autoshield"
+          : tx.direction == TransactionDirection.incoming
+              ? "Received"
+              : "Sent";
+      if (sharedPreferences.getBool(PreferencesKey.backgroundSyncNotificationsEnabled) ?? false) {
+        await showNotification(
+            "$action ${wallet.currency.fullName} in ${wallet.name}", "${tx.amount.toString()}");
+      }
+      printV(
+          "${wallet.currency.fullName} in ${wallet.name}: TX: ${tx.date} ${tx.amount} ${tx.direction}");
     }
   }
 }

@@ -6,6 +6,7 @@ import 'package:cake_wallet/anonpay/anonpay_invoice_info.dart';
 import 'package:cake_wallet/app_scroll_behavior.dart';
 import 'package:cake_wallet/core/auth_service.dart';
 import 'package:cake_wallet/core/background_sync.dart';
+import 'package:cake_wallet/core/background_sync_session.dart';
 import 'package:cake_wallet/core/node_switching_service.dart';
 import 'package:cake_wallet/core/reset_service.dart';
 import 'package:cake_wallet/core/secure_storage.dart';
@@ -64,7 +65,6 @@ import 'package:cw_core/window_size.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_daemon/flutter_daemon.dart';
 import "package:flutter_localizations/flutter_localizations.dart";
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:hive/hive.dart';
@@ -136,7 +136,7 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
       return true;
     };
 
-    await FlutterDaemon().unmarkBackgroundSync();
+    await BackgroundSyncSession().cancelActive();
     await initDb();
 
     try {
@@ -309,7 +309,7 @@ Future<void> initializeAppConfigs({bool loadWallet = true}) async {
     payjoinSessionSource: payjoinSessionSource,
     anonpayInvoiceInfo: anonpayInvoiceInfo,
     havenSeedStore: havenSeedStore,
-    initialMigrationVersion: 71,
+    initialMigrationVersion: 72,
   );
 }
 
@@ -518,29 +518,31 @@ class TopLevelErrorWidget extends StatelessWidget {
 
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
-  bool shouldUnmark = false;
+  final session = BackgroundSyncSession();
+  var started = false;
   try {
     printV("Background sync triggered");
     printV("- WidgetsFlutterBinding.ensureInitialized()");
     WidgetsFlutterBinding.ensureInitialized();
     printV("- DartPluginRegistrant.ensureInitialized()");
     DartPluginRegistrant.ensureInitialized();
-    printV("- FlutterDaemon.markBackgroundSync()");
-    final val = await FlutterDaemon().markBackgroundSync();
-    if (val) {
+    printV("- BackgroundSyncSession.begin()");
+    if (!session.begin()) {
       printV("Background sync already in progress");
       return;
     }
-    shouldUnmark = true;
+    started = true;
     printV("Starting background sync");
-    final backgroundSync = BackgroundSync();
+    setRootDirFromEnv();
+    await initDb();
+    final backgroundSync = BackgroundSync(isCancelled: () => session.cancelled);
     await initializeAppConfigs(loadWallet: false);
     await backgroundSync.sync();
     printV("Background sync completed");
   } finally {
-    if (shouldUnmark) {
+    if (started) {
       printV("Unmarking background sync");
-      await FlutterDaemon().unmarkBackgroundSync();
+      await session.complete();
     } else {
       printV("Not unmarking background sync");
     }

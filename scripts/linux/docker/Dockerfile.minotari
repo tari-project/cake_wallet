@@ -1,0 +1,18 @@
+ARG BASE_IMAGE
+FROM --platform=linux/amd64 ${BASE_IMAGE} AS build
+
+COPY scripts/prepare_minotari.sh /w/scripts/prepare_minotari.sh
+COPY scripts/minotari_desktop_common.sh /w/scripts/minotari_desktop_common.sh
+COPY scripts/linux/build_minotari.sh /w/scripts/linux/build_minotari.sh
+COPY cw_minotari/pubspec.yaml /w/cw_minotari/pubspec.yaml
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential clang libclang-dev cmake \
+       pkg-config libssl-dev protobuf-compiler libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN cargo install --locked flutter_rust_bridge_codegen --version 2.11.1 \
+    && if ! command -v cargo-expand >/dev/null; then cargo install --locked cargo-expand --version 1.0.126; fi
+RUN bash /w/scripts/linux/build_minotari.sh
+
+FROM --platform=linux/amd64 alpine
+COPY --from=build /w/cw_minotari/linux/lib /w/cw_minotari/linux/lib
+COPY --from=build /w/cw_minotari/lib/src/rust /w/cw_minotari/lib/src/rust

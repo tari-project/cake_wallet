@@ -1,6 +1,17 @@
+import 'dart:async';
+
 import 'package:cw_core/utils/print_verbose.dart';
+import 'package:cw_minotari/minotari_native_logger.dart';
+import 'package:cw_minotari/minotari_runtime.dart';
 import 'package:cw_minotari/src/rust/api/wallet.dart'
-    show WalletCreationDetails, createWallet, restoreWallet, importViewOnlyWallet, renameWallet;
+    show
+        WalletCreationDetails,
+        createWallet,
+        restoreWallet,
+        importViewOnlyWallet,
+        renameWallet,
+        listWallets,
+        deleteWallet;
 import 'package:cw_minotari/src/rust/api/balance.dart' as balance;
 import 'package:cw_minotari/src/rust/api/address.dart' as address;
 import 'package:cw_minotari/src/rust/api/db.dart';
@@ -9,13 +20,13 @@ import 'package:cw_minotari/src/rust/api/scanner.dart' as scanner;
 import 'package:cw_minotari/src/rust/api/transactions.dart' as transactions;
 import 'package:cw_minotari/src/rust/api/send_transaction.dart' as send_tx;
 import 'package:cw_minotari/src/rust/api/network.dart';
+import 'package:cw_minotari/src/rust/api/signing.dart' as signing;
 import 'package:cw_minotari/src/rust/frb_generated.dart';
 
 export 'package:cw_minotari/src/rust/api/send_transaction.dart'
     show SendTransactionEvent, TransactionStage;
 
-export 'package:cw_minotari/src/rust/api/fee.dart'
-    show FeeEstimate, FeePriority;
+export 'package:cw_minotari/src/rust/api/fee.dart' show FeeEstimate, FeePriority;
 
 /// FFI interface for Minotari wallet using Flutter Rust Bridge
 /// Note: The Rust library uses "password" parameter name but it actually means
@@ -26,9 +37,12 @@ class MinotariFfi {
   final String dataPath;
   TariNetwork? _networkInternal;
   bool _isInitialized = false;
+  Future<void>? _nativeScanDone;
 
-  static bool _rustLibInitialized = false;
-  static bool _dbInitialized = false;
+  static int? _dbEpoch;
+  static String? _dbPath;
+  static Future<void>? _rustLibInitialization;
+  static final _nativeLogger = MinotariNativeLogger();
 
   MinotariFfi({required this.dataPath, required this.walletName});
 
@@ -41,24 +55,75 @@ class MinotariFfi {
   }
 
   static Future<void> _ensureRustLibInitialized() async {
-    if (!_rustLibInitialized) {
-      await RustLib.init();
-      _rustLibInitialized = true;
+    // Use the bridge's state, including when the app/test initialized it first.
+    // ignore: invalid_use_of_internal_member
+    if (!RustLib.instance.initialized) {
+      final initialization = _rustLibInitialization ??= RustLib.init();
+      try {
+        await initialization;
+      } finally {
+        if (identical(_rustLibInitialization, initialization)) {
+          _rustLibInitialization = null;
+        }
+      }
     }
+    await _nativeLogger.ensureInitialized();
   }
 
-  /// Initializes the shared database once for all Minotari wallets.
-  /// Subsequent calls are no-ops since all wallets share the same DB file.
+  /// Off-chain signing needs only the seed; it never opens the shared database.
+  static Future<String> signMessage(String message, {required List<String> seedWords}) async {
+    await _ensureRustLibInitialized();
+    return signing.signMessage(message: message, seedWords: seedWords);
+  }
+
+  /// Verification is also available without an open or spend-capable wallet.
+  static Future<bool> verifyMessage(
+    String message,
+    String signature, {
+    required String address,
+  }) async {
+    await _ensureRustLibInitialized();
+    return signing.verifyMessage(message: message, signature: signature, address: address);
+  }
+
+  /// Reinitializes the shared database when ownership returns from another engine.
   static Future<void> _ensureDbInitialized({required String path}) async {
-    if (!_dbInitialized) {
-      await initializeDatabase(path: path);
-      _dbInitialized = true;
+    final runtime = MinotariRuntime.instance;
+    await runtime.ensureSession();
+    if (_dbEpoch != runtime.epoch || _dbPath != path) {
+      try {
+        await runtime.run(() => initializeDatabase(path: path));
+        _dbEpoch = runtime.epoch;
+        _dbPath = path;
+      } catch (_) {
+        runtime.releaseIfIdle();
+        rethrow;
+      }
     }
   }
 
   void _ensureWalletInitialized() {
-    if (!_isInitialized) {
+    if (!_isInitialized ||
+        !MinotariRuntime.instance.ownsNative ||
+        _dbEpoch != MinotariRuntime.instance.epoch ||
+        _dbPath != dataPath) {
       throw Exception('Wallet not initialized');
+    }
+  }
+
+  /// Another engine may have used the native DB while the UI was suspended.
+  Future<void> resume() async {
+    if (!_isInitialized) throw StateError('Wallet not initialized');
+    await _ensureDbInitialized(path: dataPath);
+  }
+
+  Future<WalletCreationDetails> _initializeAccount(
+      Future<WalletCreationDetails> Function() operation) async {
+    try {
+      return await MinotariRuntime.instance.run(operation);
+    } catch (_) {
+      MinotariRuntime.instance.releaseIfIdle();
+      rethrow;
     }
   }
 
@@ -88,7 +153,8 @@ class MinotariFfi {
 
     await _ensureDbInitialized(path: dataPath);
 
-    final details = await createWallet(walletName: walletName, network: network, passphrase: passphrase);
+    final details = await _initializeAccount(
+        () => createWallet(walletName: walletName, network: network, passphrase: passphrase));
 
     _networkInternal = network;
     _isInitialized = true;
@@ -112,15 +178,16 @@ class MinotariFfi {
     final seedWords = mnemonic.split(' ').where((word) => word.isNotEmpty).toList();
 
     if (seedWords.length != 24) {
+      MinotariRuntime.instance.releaseIfIdle();
       throw Exception('Invalid mnemonic: expected 24 words, got ${seedWords.length}');
     }
 
-    final details = await restoreWallet(
-      walletName: walletName,
-      seedWords: seedWords,
-      passphrase: passphrase,
-      network: network,
-    );
+    final details = await _initializeAccount(() => restoreWallet(
+          walletName: walletName,
+          seedWords: seedWords,
+          passphrase: passphrase,
+          network: network,
+        ));
 
     _networkInternal = network;
     _isInitialized = true;
@@ -144,14 +211,14 @@ class MinotariFfi {
 
     await _ensureDbInitialized(path: dataPath);
 
-    final details = await importViewOnlyWallet(
-      walletName: walletName,
-      viewPrivateKeyHex: viewPrivateKeyHex,
-      spendPublicKeyHex: spendPublicKeyHex,
-      birthday: birthday,
-      passphrase: passphrase,
-      network: network,
-    );
+    final details = await _initializeAccount(() => importViewOnlyWallet(
+          walletName: walletName,
+          viewPrivateKeyHex: viewPrivateKeyHex,
+          spendPublicKeyHex: spendPublicKeyHex,
+          birthday: birthday,
+          passphrase: passphrase,
+          network: network,
+        ));
 
     _networkInternal = network;
     _isInitialized = true;
@@ -166,7 +233,29 @@ class MinotariFfi {
     await _ensureDbInitialized(path: dataPath);
 
     printV("[MinotariFfi] Renaming wallet from \"$walletName\" to \"$newWalletName\"");
-    await renameWallet(currentWalletName: walletName, newWalletName: newWalletName);
+    try {
+      await MinotariRuntime.instance
+          .run(() => renameWallet(currentWalletName: walletName, newWalletName: newWalletName));
+    } finally {
+      MinotariRuntime.instance.releaseIfIdle();
+    }
+  }
+
+  /// Remove only this account from the shared database, without opening it or
+  /// stopping another wallet's scanner. Missing accounts allow cleanup to resume
+  /// after native deletion succeeded but file/metadata deletion failed.
+  Future<void> remove() async {
+    await _ensureRustLibInitialized();
+    await _ensureDbInitialized(path: dataPath);
+    try {
+      await MinotariRuntime.instance.run(() async {
+        if ((await listWallets()).contains(walletName)) {
+          await deleteWallet(walletName: walletName);
+        }
+      });
+    } finally {
+      MinotariRuntime.instance.releaseIfIdle();
+    }
   }
 
   /// Get wallet address
@@ -174,11 +263,11 @@ class MinotariFfi {
   Future<String> getAddress({required String passphrase}) async {
     _ensureWalletInitialized();
 
-    return await address.getAddress(
-      walletName: walletName,
-      passphrase: passphrase,
-      network: _network,
-    );
+    return await MinotariRuntime.instance.run(() => address.getAddress(
+          walletName: walletName,
+          passphrase: passphrase,
+          network: _network,
+        ));
   }
 
   /// Get wallet balance
@@ -186,7 +275,8 @@ class MinotariFfi {
     _ensureWalletInitialized();
 
     printV('[MinotariFfi] Getting balance for wallet "$walletName"');
-    final balanceData = await balance.getBalance(walletName: walletName);
+    final balanceData =
+        await MinotariRuntime.instance.run(() => balance.getBalance(walletName: walletName));
     printV('[MinotariFfi] Balance retrieved successfully for wallet "$walletName"');
 
     // Convert BigInt to int (Minotari uses micro-tari, which fits in int64)
@@ -220,12 +310,54 @@ class MinotariFfi {
       requiredConfirmations: BigInt.from(requiredConfirmations),
     );
 
-    return scanner.startScan(config: config);
+    final done = Completer<void>();
+    // Cancelling a Dart subscription does not join the Rust scan. Keep its raw
+    // stream alive until Rust returns, and retain ownership for that whole time.
+    var forwarding = true;
+    late StreamController<scanner.ScanEventDto> controller;
+    controller = StreamController<scanner.ScanEventDto>(
+      onListen: () {
+        _nativeScanDone = MinotariRuntime.instance.run(() {
+          scanner.startScan(config: config).listen(
+            (event) {
+              if (forwarding) controller.add(event);
+            },
+            onError: (Object error, StackTrace stack) {
+              if (forwarding) controller.addError(error, stack);
+            },
+            onDone: () {
+              done.complete();
+              unawaited(controller.close());
+            },
+          );
+          return done.future;
+        }).catchError((Object error, StackTrace stack) {
+          if (forwarding && !controller.isClosed) controller.addError(error, stack);
+          unawaited(controller.close());
+        });
+      },
+      onCancel: () async {
+        forwarding = false;
+        await stopScan();
+      },
+    );
+    return controller.stream;
   }
 
   /// Stop the currently running scan
   Future<void> stopScan() async {
-    await scanner.stopScan();
+    // A stale UI handle must not cancel the background engine's scanner.
+    if (MinotariRuntime.instance.ownsNative) {
+      await scanner.stopScan();
+      await _nativeScanDone;
+    }
+  }
+
+  Future<List<transactions.DisplayedTransactionDto>> getChangedTransactions(
+      {List<String>? transactionIds}) async {
+    _ensureWalletInitialized();
+    return await MinotariRuntime.instance.run(() => transactions.getChangedTransactions(
+        walletName: walletName, transactionIds: transactionIds));
   }
 
   /// Get transaction history from the wallet
@@ -235,11 +367,11 @@ class MinotariFfi {
   }) async {
     _ensureWalletInitialized();
 
-    return await transactions.getTransactions(
-      walletName: walletName,
-      limit: limit,
-      offset: offset,
-    );
+    return await MinotariRuntime.instance.run(() => transactions.getTransactions(
+          walletName: walletName,
+          limit: limit,
+          offset: offset,
+        ));
   }
 
   /// Send a transaction to the specified recipient
@@ -258,6 +390,8 @@ class MinotariFfi {
     required BigInt amount,
     required String baseNodeUrl,
     String? paymentId,
+    required BigInt feePerGram,
+    required BigInt maxFee,
   }) {
     _ensureWalletInitialized();
 
@@ -272,7 +406,11 @@ class MinotariFfi {
       paymentId: paymentId,
     );
 
-    return send_tx.sendTransaction(details: details);
+    return send_tx.sendTransactionWithFee(
+      details: details,
+      feePerGram: feePerGram,
+      maxFee: maxFee,
+    );
   }
 
   /// Estimate transaction fee based on amount and priority
@@ -284,15 +422,17 @@ class MinotariFfi {
     required BigInt amount,
     required fee.FeePriority priority,
     required String baseNodeUrl,
+    String? paymentId,
   }) async {
     _ensureWalletInitialized();
 
-    return await fee.estimateTransactionFee(
-      amount: amount,
-      priority: priority,
-      baseUrl: baseNodeUrl,
-      walletName: walletName,
-    );
+    return await MinotariRuntime.instance.run(() => fee.estimatePaymentFee(
+          amount: amount,
+          priority: priority,
+          baseUrl: baseNodeUrl,
+          walletName: walletName,
+          paymentId: paymentId,
+        ));
   }
 
   /// Dispose of the wallet handle
@@ -304,5 +444,6 @@ class MinotariFfi {
       _isInitialized = false;
       _networkInternal = null;
     }
+    MinotariRuntime.instance.releaseIfIdle();
   }
 }

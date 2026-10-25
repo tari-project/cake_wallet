@@ -57,7 +57,8 @@ bitbox_ver=$(tinysha $SCRIPT_DIR/Dockerfile.bitbox $REPO_ROOT/scripts/build_bitb
 monero_ver=$(tinysha $SCRIPT_DIR/Dockerfile.monero $REPO_ROOT/scripts/prepare_moneroc.sh $REPO_ROOT/scripts/linux/build_monero_all.sh)
 mwebd_ver=$(tinysha $SCRIPT_DIR/Dockerfile.mwebd $REPO_ROOT/pubspec_overrides.yaml $(find $REPO_ROOT/cw_mweb/go -type f))
 zcash_ver=$(tinysha $SCRIPT_DIR/Dockerfile.zcash $REPO_ROOT/scripts/prepare_zcash.sh $REPO_ROOT/scripts/linux/build_zcash.sh)
-echo $base_ver $torch_ver $reown_ver $bitbox_ver $monero_ver $mwebd_ver $zcash_ver > /tmp/docker_build_versions
+minotari_ver=$(tinysha "$SCRIPT_DIR/Dockerfile.minotari" "$REPO_ROOT/scripts/prepare_minotari.sh" "$REPO_ROOT/scripts/minotari_desktop_common.sh" "$REPO_ROOT/scripts/linux/build_minotari.sh" "$REPO_ROOT/cw_minotari/pubspec.yaml")
+echo $base_ver $torch_ver $reown_ver $bitbox_ver $monero_ver $mwebd_ver $zcash_ver $minotari_ver > /tmp/docker_build_versions
 final_ver=$(tinysha /tmp/docker_build_versions)
 
 docker create --name temp_extract $(img final $final_ver) \
@@ -84,6 +85,8 @@ build monero "$monero_ver" --build-arg BASE_IMAGE="$(img base "$base_ver")"
 
 build zcash "$zcash_ver" --build-arg BASE_IMAGE="$(img base "$base_ver")"
 
+build minotari "$minotari_ver" --build-arg BASE_IMAGE="$(img base "$base_ver")"
+
 build torch "$torch_ver" \
   --build-arg BASE_IMAGE="$(img base "$base_ver")"
 
@@ -94,7 +97,8 @@ build final $final_ver \
   --build-arg BITBOX_IMAGE="$(img bitbox $bitbox_ver)" \
   --build-arg MONERO_IMAGE="$(img monero $monero_ver)" \
   --build-arg MWEBD_IMAGE="$(img mwebd $mwebd_ver)" \
-  --build-arg ZCASH_IMAGE="$(img zcash $zcash_ver)"
+  --build-arg ZCASH_IMAGE="$(img zcash $zcash_ver)" \
+  --build-arg MINOTARI_IMAGE="$(img minotari $minotari_ver)"
 
 echo "done: $(img final $final_ver)"
 echo $(img final $final_ver) > /tmp/cakewallet_docker

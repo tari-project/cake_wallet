@@ -1,4 +1,6 @@
 import 'package:cake_wallet/view_model/send/output.dart';
+import 'package:cw_core/amount/money.dart';
+import 'package:cw_core/crypto_currency.dart';
 import 'package:cw_core/output_info.dart';
 import 'package:cw_core/transaction_priority.dart';
 import 'package:cw_core/wallet_credentials.dart';
@@ -9,6 +11,7 @@ import 'package:cw_minotari/minotari_transaction_priority.dart';
 import 'package:cw_minotari/minotari_wallet.dart';
 import 'package:cw_minotari/minotari_wallet_service.dart';
 import 'package:cw_minotari/pending_minotari_transaction.dart';
+import 'package:cw_minotari/minotari_runtime.dart';
 
 part 'cw_minotari.dart';
 
@@ -16,6 +19,8 @@ Minotari? minotari = CWMinotari();
 
 abstract class Minotari {
   WalletService createMinotariWalletService();
+  Future<bool> beginBackgroundSync();
+  Future<void> endBackgroundSync();
 
   WalletCredentials createMinotariNewWalletCredentials({
     required String name,
@@ -43,16 +48,25 @@ abstract class Minotari {
     WalletInfo? walletInfo,
   });
 
-  double? getMinotariEstimatedFee(Object wallet);
+  Money? getMinotariEstimatedFee(Object wallet);
+
+  Future<Money> estimateMinotariPaymentFee(
+    Object wallet, {
+    required Money amount,
+    TransactionPriority? priority,
+    String? paymentId,
+  });
 
   List<TransactionPriority> getTransactionPriorities();
   TransactionPriority deserializeMinotariTransactionPriority({required int raw});
   TransactionPriority getMinotariTransactionPriorityMedium();
   TransactionPriority getMinotariTransactionPrioritySlow();
 
-  Object createMinotariTransactionCredentials(List<Output> outputs);
+  Object createMinotariTransactionCredentials(List<Output> outputs,
+      {TransactionPriority? priority});
 
-  Object createMinotariTransactionCredentialsRaw(List<OutputInfo> outputs);
+  Object createMinotariTransactionCredentialsRaw(List<OutputInfo> outputs,
+      {TransactionPriority? priority});
 
   int getHeightByDate({required DateTime date});
   Future<int> getCurrentHeight();

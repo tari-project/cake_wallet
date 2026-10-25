@@ -1,5 +1,7 @@
 import 'package:cake_wallet/generated/i18n.dart';
 import 'package:cake_wallet/src/screens/seed/wallet_seed_page.dart';
+import 'package:cake_wallet/src/widgets/seedphrase_grid_widget.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../components/common_test_cases.dart';
@@ -35,7 +37,7 @@ class WalletSeedPageRobot {
     await commonTestCases.defaultSleepTime();
   }
 
-  void confirmWalletDetailsDisplayCorrectly() {
+  Future<void> confirmWalletDetailsDisplayCorrectly() async {
     final walletSeedPage = tester.widget<WalletSeedPage>(find.byType(WalletSeedPage));
 
     final walletSeedViewModel = walletSeedPage.walletSeedViewModel;
@@ -43,7 +45,18 @@ class WalletSeedPageRobot {
     final walletName = walletSeedViewModel.name;
     final walletSeeds = walletSeedViewModel.seedSplit;
     commonTestCases.hasText(walletName);
-    for (var seed in walletSeeds) {
+    final scrollable = find.descendant(
+      of: find.byType(SeedPhraseGridWidget),
+      matching: find.byType(Scrollable),
+    );
+    for (final (index, seed) in walletSeeds.indexed) {
+      // GridView lazily builds later rows in small desktop/mobile windows.
+      // Use the unique row number: words can repeat and may not be built yet.
+      final number = find.descendant(
+        of: find.byType(SeedPhraseGridWidget),
+        matching: find.text('${index + 1}'),
+      );
+      await tester.scrollUntilVisible(number, 100, scrollable: scrollable);
       commonTestCases.hasTextAtLestOnce(seed);
     }
   }

@@ -1,11 +1,11 @@
-import 'package:cw_core/crypto_currency.dart';
+import 'package:cw_core/amount/money.dart';
 import 'package:cw_core/pending_transaction.dart';
 import 'package:cw_core/output_info.dart';
-import 'package:cw_minotari/minotari_amount_format.dart';
+import 'package:cw_core/transaction_priority.dart';
 
 class PendingMinotariTransaction with PendingTransaction {
-  final int amount;
-  final int fee;
+  final Money amount;
+  final Money fee;
   final String recipientAddress;
   final Future<String> Function() sendTransaction;
 
@@ -22,15 +22,13 @@ class PendingMinotariTransaction with PendingTransaction {
   String get id => _txId ?? '';
 
   @override
-  String get amountFormatted =>
-      '${minotariAmountToString(amount: amount)} ${CryptoCurrency.xtm.title}';
+  String get amountFormatted => amount.toStringWithSymbol();
 
   @override
-  String get feeFormatted =>
-      '${minotariAmountToString(amount: fee)} ${CryptoCurrency.xtm.title}';
+  String get feeFormatted => fee.toStringWithSymbol();
 
   @override
-  String get feeFormattedValue => minotariAmountToString(amount: fee);
+  String get feeFormattedValue => fee.toString();
 
   @override
   String get hex => _txId ?? '';
@@ -50,5 +48,7 @@ class PendingMinotariTransaction with PendingTransaction {
 class MinotariTransactionCredentials {
   final List<OutputInfo> outputs;
 
-  MinotariTransactionCredentials(this.outputs);
+  final TransactionPriority? priority;
+
+  MinotariTransactionCredentials(this.outputs, {this.priority});
 }

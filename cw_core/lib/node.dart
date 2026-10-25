@@ -364,8 +364,38 @@ class Node {
         case WalletType.decred:
           return requestDecredNode();
         case WalletType.minotari:
+          return requestMinotariNode();
         case WalletType.none:
           return false;
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> requestMinotariNode() async {
+    try {
+      final baseUri = uri;
+      if (baseUri.host.isEmpty) return false;
+      // Use the same root RPC path as Minotari's native HTTP client.
+      final client = ProxyWrapper().getHttpIOClient();
+      try {
+        final response = await client
+            .get(baseUri.resolve("/get_tip_info"))
+            .timeout(const Duration(seconds: 5));
+        if (response.statusCode != 200) return false;
+
+        final data = jsonDecode(response.body);
+        if (data is! Map<String, dynamic> || data["is_synced"] is! bool) return false;
+        // Liveness does not require sync completion or chain metadata yet.
+        final metadata = data["metadata"];
+        return metadata == null ||
+            (metadata is Map<String, dynamic> &&
+                metadata["best_block_height"] is int &&
+                (metadata["best_block_height"] as int) >= 0);
+      } finally {
+        // Closing the client also cancels an outstanding request after timeout.
+        client.close();
       }
     } catch (_) {
       return false;

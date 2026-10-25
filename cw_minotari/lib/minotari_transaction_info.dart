@@ -1,8 +1,9 @@
+import 'package:cw_core/amount/money.dart';
 import 'package:cw_core/crypto_currency.dart';
 import 'package:cw_core/format_amount.dart';
 import 'package:cw_core/transaction_direction.dart';
 import 'package:cw_core/transaction_info.dart';
-import 'package:cw_minotari/minotari_amount_format.dart';
+import 'package:cw_minotari/minotari_explorer.dart';
 
 class MinotariTransactionInfo extends TransactionInfo {
   MinotariTransactionInfo({
@@ -15,24 +16,30 @@ class MinotariTransactionInfo extends TransactionInfo {
     int? height,
     int confirmations = 0,
     List<String>? payrefs,
+    bool isTestnet = false,
   }) {
     final payrefsList = payrefs ?? [];
     this.id = id;
-    // Use first payref as txHash for block explorer link generation
-    this.txHash = payrefsList.isNotEmpty ? payrefsList.first : 'null';
-    this.amount = amount;
+    // Cake matches history rows by txHash. The wallet-local ID stays stable
+    // from pending to mined; PayRefs belong only to the payment/explorer data.
+    txHash = id;
+    this.amount = Money.fromInt(amount, CryptoCurrency.xtm);
     this.date = date;
     this.direction = direction;
     this.isPending = isPending;
-    this.fee = fee;
+    this.fee = fee == null ? null : Money.fromInt(fee, CryptoCurrency.xtm);
     this.height = height;
     this.confirmations = confirmations;
+    additionalInfo['payrefs'] = List<String>.unmodifiable(payrefsList);
+    additionalInfo['explorerUrl'] = minotariExplorerUrl(
+      height: height,
+      payrefs: payrefsList,
+      isTestnet: isTestnet,
+    );
   }
   String? _fiatAmount;
 
-  @override
-  String amountFormatted() =>
-      '${formatAmount(minotariAmountToString(amount: amount))} ${CryptoCurrency.xtm.title}';
+  String amountFormatted() => amount.toStringWithSymbol();
 
   @override
   String fiatAmount() => _fiatAmount ?? '';
@@ -40,9 +47,7 @@ class MinotariTransactionInfo extends TransactionInfo {
   @override
   void changeFiatAmount(String amount) => _fiatAmount = formatAmount(amount);
 
-  @override
   String? feeFormatted() {
-    if (fee == null) return null;
-    return '${formatAmount(minotariAmountToString(amount: fee!))} ${CryptoCurrency.xtm.title}';
+    return fee?.toStringWithSymbol();
   }
 }

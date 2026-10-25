@@ -174,17 +174,19 @@ class _TransactionDetailsModalState extends State<TransactionDetailsModal> {
                                 Observer(
                                   builder: (_) => NewListSections(
                                     sections: {
-                                      "view tx": [
-                                        ListItemRegularRow(
-                                          keyValue: "view tx on",
-                                          label: widget
-                                              .transactionDetailsViewModel.explorerDescription,
-                                          onTap: widget.transactionDetailsViewModel.launchExplorer,
-                                          foregroundColor: Theme.of(context).colorScheme.primary,
-                                          trailingIconPath: "assets/new-ui/link_arrow.svg",
-                                          trailingIconSize: 8,
-                                        ),
-                                      ],
+                                      if (widget.transactionDetailsViewModel.hasExplorer)
+                                        "view tx": [
+                                          ListItemRegularRow(
+                                            keyValue: "view tx on",
+                                            label: widget
+                                                .transactionDetailsViewModel.explorerDescription,
+                                            onTap:
+                                                widget.transactionDetailsViewModel.launchExplorer,
+                                            foregroundColor: Theme.of(context).colorScheme.primary,
+                                            trailingIconPath: "assets/new-ui/link_arrow.svg",
+                                            trailingIconSize: 8,
+                                          ),
+                                        ],
                                       if (widget.transactionDetailsViewModel.canReplaceByFee)
                                         "rbf": [
                                           ListItemRegularRow(

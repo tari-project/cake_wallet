@@ -152,6 +152,7 @@ String? symbolIconPathForWalletType(WalletType type) {
     case WalletType.wownero:
     case WalletType.haven:
     case WalletType.banano:
+    case WalletType.minotari:
     case WalletType.none:
       return null;
   }

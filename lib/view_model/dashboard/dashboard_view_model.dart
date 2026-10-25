@@ -1253,11 +1253,11 @@ abstract class DashboardViewModelBase with Store {
       case WalletType.wownero:
       case WalletType.decred:
       case WalletType.dogecoin:
+      case WalletType.minotari:
         return true;
       case WalletType.zano:
       case WalletType.haven:
       case WalletType.zcash:
-      case WalletType.minotari:
       case WalletType.none:
         return false;
     }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' show min;
 import 'package:cake_wallet/bitcoin/bitcoin.dart';
 import 'package:cake_wallet/core/address_resolver/address_sources.dart';
@@ -50,13 +51,28 @@ abstract class OutputBase with Store {
         extractedAddress = '',
         estimatedFee = Money.zero(cryptoCurrencyHandler()),
         parsedAddress = ParsedAddress(parsedAddressByCurrencyMap: {}) {
-    autorun((_) {
-      final status = _wallet.syncStatus;
-      if (status is! SyncedSyncStatus) {
-        return;
-      }
-      calculateEstimatedFee();
-    });
+    if (_wallet.type == WalletType.minotari) {
+      reaction(
+        (_) => (cryptoAmount, note, sendAll, _wallet.syncStatus,
+            _settingsStore.getPriority(_wallet.type, chainId: _wallet.chainId)),
+        (_) {
+          // Invalidate display immediately; debounce only the network request.
+          _minotariFeeRequest++;
+          runInAction(() => estimatedFee = Money.zero(CryptoCurrency.xtm));
+          _minotariFeeTimer?.cancel();
+          _minotariFeeTimer = Timer(const Duration(milliseconds: 300), calculateEstimatedFee);
+        },
+        fireImmediately: true,
+      );
+    } else {
+      autorun((_) {
+        final status = _wallet.syncStatus;
+        if (status is! SyncedSyncStatus) {
+          return;
+        }
+        calculateEstimatedFee();
+      });
+    }
   }
 
   Key key;
@@ -128,12 +144,31 @@ abstract class OutputBase with Store {
   @observable
   Money estimatedFee;
 
+  int _minotariFeeRequest = 0;
+  Timer? _minotariFeeTimer;
+
   @action
   Future<void> calculateEstimatedFee() async {
     try {
       final priority = _settingsStore.getPriority(_wallet.type, chainId: _wallet.chainId);
-      // TODO check why fee isn't triggered for Minotari without this
-      if (isEVMCompatibleChain(_wallet.type) || _wallet.type == WalletType.minotari) {
+      if (_wallet.type == WalletType.minotari) {
+        _minotariFeeTimer?.cancel();
+        _minotariFeeTimer = null;
+        final request = ++_minotariFeeRequest;
+        final amount = cryptoAmountMoney;
+        final paymentId = note;
+        estimatedFee = Money.zero(CryptoCurrency.xtm);
+        if (sendAll || amount.sign <= 0) return;
+        final next = await minotari!.estimateMinotariPaymentFee(
+          _wallet, amount: amount, priority: priority, paymentId: paymentId,
+        );
+        if (request == _minotariFeeRequest && amount == cryptoAmountMoney && paymentId == note &&
+            priority == _settingsStore.getPriority(_wallet.type, chainId: _wallet.chainId)) {
+          estimatedFee = next;
+        }
+        return;
+      }
+      if (isEVMCompatibleChain(_wallet.type)) {
         await _wallet.updateEstimatedFeesParams(priority);
       }
 
@@ -210,7 +245,7 @@ abstract class OutputBase with Store {
         /// end EVMs
 
         case WalletType.minotari:
-          estimatedFee = minotari!.getMinotariEstimatedFee(_wallet)?.toString() ?? '0.0';
+          estimatedFee = minotari!.getMinotariEstimatedFee(_wallet) ?? Money.zero(CryptoCurrency.xtm);
           break;
 
         case WalletType.haven:

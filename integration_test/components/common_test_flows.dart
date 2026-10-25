@@ -26,6 +26,7 @@ import 'common_test_cases.dart';
 import 'package:cake_wallet/.secrets.g.dart' as secrets;
 
 import 'common_test_constants.dart';
+import '../fixtures/minotari_test_wallet.dart';
 
 class CommonTestFlows {
   CommonTestFlows(this._tester)
@@ -273,7 +274,7 @@ class CommonTestFlows {
   Future<void> _confirmWalletDetails() async {
     await _walletSeedPageRobot.isWalletSeedPage();
 
-    _walletSeedPageRobot.confirmWalletDetailsDisplayCorrectly();
+    await _walletSeedPageRobot.confirmWalletDetailsDisplayCorrectly();
 
     _walletSeedPageRobot.confirmWalletSeedReminderDisplays();
 
@@ -372,8 +373,7 @@ class CommonTestFlows {
       case WalletType.zcash:
         return secrets.zcashTestWalletSeeds;
       case WalletType.minotari:
-        // TODO: Add Minotari test seeds when available
-        return '';
+        return MinotariTestWallet.seed;
       case WalletType.none:
       case WalletType.haven:
       case WalletType.banano:

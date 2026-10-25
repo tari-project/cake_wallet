@@ -58,18 +58,19 @@ bool _hasMinotariCounterparty(TransactionDetailsViewModelBase vm) =>
     vm.wallet.type == WalletType.minotari &&
     vm.transactionInfo.additionalInfo["counterpartyAddress"] != null;
 
-/// Minotari surfaces the counterparty as an address plus an optional emoji ID.
-String _minotariCounterparty(TransactionDetailsViewModelBase vm) {
-  final address = vm.transactionInfo.additionalInfo["counterpartyAddress"] as String? ?? "";
-  final emoji = vm.transactionInfo.additionalInfo["counterpartyEmoji"] as String?;
-  return emoji != null ? "$emoji $address" : address;
-}
+/// Display and copy the Base58 encoding of the Minotari counterparty address.
+String _minotariCounterparty(TransactionDetailsViewModelBase vm) =>
+    vm.transactionInfo.additionalInfo["counterpartyAddress"] as String? ?? "";
 
 String _minotariInfo(TransactionDetailsViewModelBase vm, String field) =>
     vm.transactionInfo.additionalInfo[field] as String? ?? "";
 
 bool _hasMinotariInfo(TransactionDetailsViewModelBase vm, String field) =>
     vm.wallet.type == WalletType.minotari && _minotariInfo(vm, field).isNotEmpty;
+
+bool _isMinotariRestorePreview(TransactionDetailsViewModelBase vm) =>
+    vm.wallet.type == WalletType.minotari &&
+    vm.transactionInfo.additionalInfo['restoringHistory'] == true;
 
 class TxDetailRowDefinition {
   TxDetailRowDefinition({
@@ -125,13 +126,18 @@ class TxDetailRowDefinition {
             WalletType.monero,
             WalletType.minotari
           ].contains(vm.wallet.type) &&
-          !isLightning(vm.transactionInfo),
+          !isLightning(vm.transactionInfo) &&
+          !_isMinotariRestorePreview(vm),
       listItemBuilder: ConfirmationsListItem.new,
     ),
     TxDetailRowDefinition(
       keyString: "standard_list_item_transaction_details_status_key",
       title: "Status",
-      valueGetter: (vm) => _minotariInfo(vm, "status"),
+      valueGetter: (vm) => _isMinotariRestorePreview(vm)
+          ? vm.transactionInfo.direction == TransactionDirection.incoming
+              ? S.current.received
+              : S.current.sent
+          : _minotariInfo(vm, "status"),
       applicable: (vm) => _hasMinotariInfo(vm, "status"),
     ),
     TxDetailRowDefinition(
@@ -287,7 +293,9 @@ class TxDetailRowDefinition {
     TxDetailRowDefinition(
       keyString: "standard_list_item_transaction_details_id_key",
       title: S.current.transaction_details_transaction_id,
-      valueGetter: (vm) => vm.transactionInfo.txHash,
+      valueGetter: (vm) => vm.wallet.type == WalletType.minotari
+          ? vm.transactionInfo.id
+          : vm.transactionInfo.txHash,
     ),
   ];
 }
@@ -458,6 +466,7 @@ abstract class TransactionDetailsViewModelBase with Store {
   }
 
   String get formattedStatus {
+    if (_isMinotariRestorePreview(this)) return "";
     if ([
       WalletType.monero,
       WalletType.haven,
@@ -478,6 +487,7 @@ abstract class TransactionDetailsViewModelBase with Store {
       case WalletType.zano:
         return 10;
       case WalletType.wownero:
+      case WalletType.minotari:
         return 3;
       case WalletType.litecoin:
         final isPegOut = (transactionInfo.additionalInfo["isPegOut"] as bool?) ?? false;
@@ -561,7 +571,11 @@ abstract class TransactionDetailsViewModelBase with Store {
       case WalletType.zcash:
         return "https://blockchair.com/zcash/transaction/${txId}";
       case WalletType.minotari:
-        return 'https://explore.tari.com/search?hash=${txId}';
+        if (["reorganized", "cancelled", "rejected"]
+            .contains(transactionInfo.additionalInfo["status"])) {
+          return "";
+        }
+        return transactionInfo.additionalInfo["explorerUrl"] as String? ?? "";
       case WalletType.none:
         return "";
     }
@@ -569,7 +583,10 @@ abstract class TransactionDetailsViewModelBase with Store {
 
   String get explorerDescription => S.current.view_transaction_on + Uri.parse(_explorerUrl).host;
 
+  bool get hasExplorer => wallet.type != WalletType.minotari || _explorerUrl.isNotEmpty;
+
   void launchExplorer() {
+    if (!hasExplorer) return;
     launchUrl(Uri.parse(_explorerUrl));
   }
 

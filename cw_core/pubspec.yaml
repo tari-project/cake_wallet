@@ -66,6 +66,11 @@ dependency_overrides:
 
 # The following section is specific to Flutter.
 flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.cakewallet.cw_core
+        pluginClass: CwCorePlugin
   uses-material-design: true
 
   # To add assets to your package, add an assets section, like this:

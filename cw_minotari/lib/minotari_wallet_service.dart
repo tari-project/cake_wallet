@@ -12,7 +12,6 @@ import 'package:cw_core/wallet_type.dart';
 import 'package:cw_minotari/minotari_wallet.dart';
 import 'package:cw_minotari/minotari_ffi.dart';
 import 'package:cw_minotari/src/rust/api/network.dart';
-import 'package:cw_minotari/src/rust/api/wallet.dart' show deleteWallet;
 
 /// Encryption utils for Minotari - always use XChaCha20 (no legacy wallet support needed)
 final _encryptionFileUtils = encryptionFileUtilsFor(true);
@@ -134,8 +133,16 @@ class MinotariWalletService extends WalletService<
 
   @override
   Future<void> remove(String wallet) async {
+    // Validate Cake metadata before deleting any native data. All XTM accounts
+    // share wallet.db; only the named account and its own directory may go.
+    final walletInfo = await WalletInfo.get(wallet, getType());
+    if (walletInfo == null) {
+      throw Exception('Wallet not found');
+    }
+    final dbPath = '${await pathForWalletTypeDir(type: getType())}/wallet.db';
+    final ffi = MinotariFfi(dataPath: dbPath, walletName: wallet);
     try {
-      await deleteWallet(walletName: wallet);
+      await ffi.remove();
       printV('[MinotariWalletService] Successfully removed wallet "$wallet" from database');
     } catch (e) {
       printV('[MinotariWalletService] Failed to delete wallet from database: $e');
@@ -151,10 +158,6 @@ class MinotariWalletService extends WalletService<
       printV('[MinotariWalletService] Deleted wallet directory: $path');
     }
 
-    final walletInfo = await WalletInfo.get(wallet, getType());
-    if (walletInfo == null) {
-      throw Exception('Wallet not found');
-    }
     await WalletInfo.delete(walletInfo);
     printV('[MinotariWalletService] Deleted wallet info for "$wallet"');
   }

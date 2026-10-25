@@ -229,6 +229,8 @@ abstract class SendViewModelBase extends WalletChangeListenerViewModel with Stor
 
   bool get shouldDisplaySendALL {
     if (walletType == WalletType.solana) return false;
+    // Native XTM requires a change output; a true Send All is unsupported.
+    if (walletType == WalletType.minotari) return false;
 
     // if (walletType == WalletType.ethereum && selectedCryptoCurrency == CryptoCurrency.eth)
     // return false;
@@ -1345,7 +1347,7 @@ abstract class SendViewModelBase extends WalletChangeListenerViewModel with Stor
           // priority: priority,
         );
       case WalletType.minotari:
-        return minotari!.createMinotariTransactionCredentials(outputs);
+        return minotari!.createMinotariTransactionCredentials(outputs, priority: priority);
       default:
         throw Exception('Unexpected wallet type: ${wallet.type} for send');
     }

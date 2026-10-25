@@ -542,15 +542,6 @@ Future<void> defaultSettingsMigration(
               PreferencesKey.syncStatusDisplayMode, SyncStatusDisplayMode.blocksRemaining.name);
           break;
         case 57:
-          await addWalletNodeList(nodes: nodes, type: WalletType.minotari);
-          await _changeDefaultNode(
-            nodes: nodes,
-            sharedPreferences: sharedPreferences,
-            type: WalletType.minotari,
-            currentNodePreferenceKey: PreferencesKey.currentMinotariNodeIdKey,
-          );
-          break;
-        case 57:
           await _addXautTokenToExistingEthereumWallets();
 
           await addWalletNodeList(type: WalletType.bsc);
@@ -656,6 +647,14 @@ Future<void> defaultSettingsMigration(
             sharedPreferences,
             providerName: "Swaps.XYZ",
             enabled: false,
+          );
+          break;
+        case 72:
+          await addWalletNodeList(type: WalletType.minotari);
+          await _changeDefaultNode(
+            sharedPreferences: sharedPreferences,
+            type: WalletType.minotari,
+            currentNodePreferenceKey: PreferencesKey.currentMinotariNodeIdKey,
           );
           break;
         default:
