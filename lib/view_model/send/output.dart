@@ -212,7 +212,8 @@ abstract class OutputBase with Store {
         /// end EVMs
 
         case WalletType.minotari:
-          estimatedFee = minotari!.getMinotariEstimatedFee(_wallet)?.toString() ?? '0.0';
+          estimatedFee =
+              minotari!.getMinotariEstimatedFee(_wallet) ?? Money.zero(CryptoCurrency.xtm);
           break;
 
         case WalletType.haven:

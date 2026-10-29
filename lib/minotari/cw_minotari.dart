@@ -57,14 +57,9 @@ class CWMinotari extends Minotari {
       );
 
   @override
-  double? getMinotariEstimatedFee(Object wallet) {
-    final minotariWallet = wallet as MinotariWallet;
-    final feeEstimate = minotariWallet.cachedFeeEstimate;
-    if (feeEstimate != null) {
-      return minotariAmountToDouble(amount: feeEstimate.estimatedFee.toInt());
-    } else {
-      return null;
-    }
+  Money? getMinotariEstimatedFee(Object wallet) {
+    final feeEstimate = (wallet as MinotariWallet).cachedFeeEstimate;
+    return feeEstimate == null ? null : Money(feeEstimate.estimatedFee, CryptoCurrency.xtm);
   }
 
   @override
@@ -88,13 +83,12 @@ class CWMinotari extends Minotari {
       MinotariTransactionCredentials(
         outputs.map((out) => OutputInfo(
           fiatAmount: out.fiatAmount,
-          cryptoAmount: out.cryptoAmount,
+          cryptoAmount: out.cryptoAmountMoney,
           address: out.address,
           note: out.note,
           sendAll: out.sendAll,
           extractedAddress: out.extractedAddress,
           isParsedAddress: out.isParsedAddress,
-          formattedCryptoAmount: out.formattedCryptoAmount,
         )).toList(),
       );
 
