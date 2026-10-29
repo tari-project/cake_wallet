@@ -1886,6 +1886,7 @@ import 'package:cw_minotari/minotari_transaction_priority.dart';
 import 'package:cw_minotari/minotari_wallet.dart';
 import 'package:cw_minotari/minotari_wallet_service.dart';
 import 'package:cw_minotari/pending_minotari_transaction.dart';
+import 'package:cw_minotari/src/rust/api/burn.dart';
 """;
   const minotariCwPart = "part 'cw_minotari.dart';";
   const minotariContent = """
@@ -1938,6 +1939,33 @@ abstract class Minotari {
   String formatterMinotariAmountToString({required int amount});
   double formatterMinotariAmountToDouble({required int amount});
   int formatterMinotariParseAmount({required String amount});
+
+  /// Fee (µT) a burn of [amount] µT is expected to pay.
+  Future<int> estimateBurnFee(Object wallet, int amount);
+
+  /// Burns [amount] µT to the Tari Ootle account with [claimPublicKey]. Irreversible. Emits
+  /// progress messages; an error means nothing was broadcast.
+  Stream<String> burnToL2(Object wallet, {required String claimPublicKey, required int amount});
+
+  /// The wallet's burns. Fetching them saves every confirmed claim proof for the L2 wallet.
+  Future<List<MinotariBurn>> getBurns(Object wallet);
+}
+
+/// An L1 burn to Tari Ootle and whether its claim proof is ready.
+class MinotariBurn {
+  MinotariBurn({
+    required this.commitment,
+    required this.claimPublicKey,
+    required this.amount,
+    required this.isReady,
+    this.pendingReason,
+  });
+
+  final String commitment;
+  final String claimPublicKey;
+  final int amount;
+  final bool isReady;
+  final String? pendingReason;
 }
 
   """;

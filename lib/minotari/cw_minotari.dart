@@ -149,4 +149,26 @@ class CWMinotari extends Minotari {
   @override
   int formatterMinotariParseAmount({required String amount}) =>
       minotariParseAmount(amount: amount);
+
+  @override
+  Future<int> estimateBurnFee(Object wallet, int amount) =>
+      (wallet as MinotariWallet).estimateBurnFee(amount);
+
+  @override
+  Stream<String> burnToL2(Object wallet, {required String claimPublicKey, required int amount}) =>
+      (wallet as MinotariWallet)
+          .burnToL2(claimPublicKey: claimPublicKey, amount: amount)
+          .map((event) => event.details);
+
+  @override
+  Future<List<MinotariBurn>> getBurns(Object wallet) async =>
+      (await (wallet as MinotariWallet).getBurnProofs())
+          .map((p) => MinotariBurn(
+                commitment: p.commitment,
+                claimPublicKey: p.claimPublicKey,
+                amount: p.amount.toInt(),
+                isReady: p.status == BurnProofStatus.ready,
+                pendingReason: p.pendingReason,
+              ))
+          .toList();
 }

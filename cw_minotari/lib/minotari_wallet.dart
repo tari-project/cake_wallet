@@ -20,6 +20,7 @@ import 'package:cw_minotari/minotari_transaction_priority.dart';
 import 'package:cw_minotari/minotari_wallet_addresses.dart';
 import 'package:cw_minotari/pending_minotari_transaction.dart';
 import 'package:cw_minotari/src/rust/api/base_node.dart';
+import 'package:cw_minotari/src/rust/api/burn.dart' as burn;
 import 'package:cw_minotari/src/rust/api/network.dart';
 import 'package:cw_minotari/src/rust/api/scanner.dart';
 import 'package:cw_minotari/src/rust/api/transactions.dart';
@@ -214,6 +215,7 @@ abstract class MinotariWalletBase
             await updateBalance();
             await updateTransactions();
             syncStatus = SyncedSyncStatus();
+            unawaited(_refreshBurnProofs());
           } catch (e) {
             printV('Error updating after scan: $e');
             syncStatus = FailedSyncStatus();
@@ -531,6 +533,75 @@ abstract class MinotariWalletBase
     }
     // Default to medium priority
     return FeePriority.medium;
+  }
+
+  TariNetwork get _network => TariNetwork.values.firstWhere(
+        (n) => n.name == walletInfo.network,
+        orElse: () => TariNetwork.mainNet,
+      );
+
+  /// Fee per gram of the last [estimateBurnFee], which [burnToL2] pays.
+  BigInt? _burnFeePerGram;
+
+  /// Fee (µT) of an ordinary send of [amount] µT at medium priority; a burn is about the same size.
+  Future<int> estimateBurnFee(int amount) async {
+    final node = _currentNode;
+    final ffi = _ffi;
+    if (node == null || ffi == null) throw Exception('No node connected.');
+    final estimate = await ffi.estimateFee(
+      amount: BigInt.from(amount),
+      priority: FeePriority.medium,
+      baseNodeUrl: node.uri.toString(),
+    );
+    _burnFeePerGram = estimate.feePerGram;
+    return estimate.estimatedFee.toInt();
+  }
+
+  /// Burns [amount] µT to the Tari Ootle (L2) account with [claimPublicKey]. Irreversible.
+  ///
+  /// The stream ends after the burn is recorded; an error means nothing was broadcast. The scan
+  /// rebroadcasts a recorded burn the node did not accept, so never repeat one that completed.
+  Stream<SendTransactionEvent> burnToL2({
+    required String claimPublicKey,
+    required int amount,
+  }) {
+    final node = _currentNode;
+    if (node == null || _ffi == null) throw Exception('No node connected.');
+    final events = burn.burnToL2(
+      details: burn.BurnToL2Details(
+        passphrase: passphrase ?? '',
+        network: _network,
+        baseUrl: node.uri.toString(),
+        walletName: walletInfo.name,
+        claimPublicKey: claimPublicKey,
+        amount: BigInt.from(amount),
+        feePerGram: _burnFeePerGram,
+      ),
+    );
+    return events.transform(StreamTransformer.fromHandlers(handleDone: (sink) {
+      unawaited(updateBalance());
+      unawaited(updateTransactions());
+      sink.close();
+    }));
+  }
+
+  /// This wallet's burns, writing each claim proof to [burnProofsDir] once it is confirmed.
+  Future<List<burn.BurnProofDto>> getBurnProofs() async {
+    final node = _currentNode;
+    if (node == null || _ffi == null) return [];
+    return burn.getBurnProofs(
+      walletName: walletInfo.name,
+      network: _network,
+      baseUrl: node.uri.toString(),
+    );
+  }
+
+  Future<void> _refreshBurnProofs() async {
+    try {
+      await getBurnProofs();
+    } catch (e) {
+      printV('Error refreshing burn proofs: $e');
+    }
   }
 
   /// Get the cached fee estimate (for display purposes)
