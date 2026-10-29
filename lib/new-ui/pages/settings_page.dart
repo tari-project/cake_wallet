@@ -25,8 +25,13 @@ bool _hasSilentPayments(DashboardViewModel vm) => vm.hasSilentPayments;
 bool _hasMweb(DashboardViewModel vm) => vm.hasMweb;
 
 /// Burning to L2 needs both bridges, so both coins must be in this build.
+// Ootle mainnet isn't live, so only Esmeralda wallets can burn to L2 (a mainnet burn couldn't be
+// claimed yet). MinotariWallet.burnToL2 refuses mainnet too.
 bool _canBurnToTari(DashboardViewModel vm) =>
-    vm.wallet.type == WalletType.minotari && minotari != null && tariOotle != null;
+    vm.wallet.type == WalletType.minotari &&
+    vm.wallet.walletInfo.network == 'esmeralda' &&
+    minotari != null &&
+    tariOotle != null;
 
 bool _isTari(DashboardViewModel vm) => vm.wallet.type == WalletType.tari;
 

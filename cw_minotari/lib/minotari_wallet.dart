@@ -565,6 +565,10 @@ abstract class MinotariWalletBase
     required String claimPublicKey,
     required int amount,
   }) {
+    // Ootle mainnet isn't live, so a mainnet burn couldn't be claimed yet.
+    if (_network == TariNetwork.mainNet) {
+      throw Exception('Tari L2 is not live on mainnet yet; burns are Esmeralda only.');
+    }
     final node = _currentNode;
     if (node == null || _ffi == null) throw Exception('No node connected.');
     final events = burn.burnToL2(
