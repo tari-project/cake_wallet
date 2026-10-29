@@ -1997,7 +1997,10 @@ import 'package:cw_core/wallet_info.dart';
 import 'package:cw_core/wallet_service.dart';
 """;
   const tariOotleCWHeaders = """
+import 'package:cw_core/crypto_currency.dart';
 import 'package:cw_core/output_info.dart';
+import 'package:cw_tari_ootle/src/rust/api/send.dart';
+import 'package:cw_tari_ootle/tari_ootle_ffi.dart';
 import 'package:cw_tari_ootle/pending_tari_ootle_transaction.dart';
 import 'package:cw_tari_ootle/tari_ootle_wallet.dart';
 import 'package:cw_tari_ootle/tari_ootle_wallet_service.dart';
@@ -2025,6 +2028,48 @@ abstract class TariOotle {
 
   /// The fee of the wallet's last priced send, if any.
   Money? getTariOotleEstimatedFee(Object wallet);
+
+  /// The key an L1 burn must target so the owner of [address] can claim it. Throws if invalid.
+  Future<String> claimPublicKeyFromAddress(String address);
+
+  /// The L2 address for an L1 wallet's seed words on the network named [networkName].
+  Future<String> addressFromSeed(String seedWords, String? networkName);
+
+  Future<bool> validateAddress(String address, String? networkName);
+
+  /// Hex key L1 burns to this wallet target; null until the wallet has connected once.
+  String? claimPublicKey(Object wallet);
+
+  /// Stores an L1 burn proof to claim; adding it again is a no-op. Throws for a bad proof.
+  Future<void> addBurnProof(Object wallet, String proofJson);
+
+  Future<List<TariOotleClaim>> getClaims(Object wallet);
+
+  /// Claims a burn into the wallet. Emits progress messages; errors if the claim failed.
+  Stream<String> claimBurn(Object wallet, String claimId);
+
+  Future<int> currentEpoch(Object wallet);
+}
+
+/// An L1 burn this wallet can claim. Amount is µT.
+class TariOotleClaim {
+  TariOotleClaim({
+    required this.id,
+    required this.amount,
+    required this.status,
+    required this.minedInEpoch,
+    this.txId,
+    this.lastError,
+  });
+
+  final String id;
+  final Money amount;
+
+  /// pending, submitted or claimed.
+  final String status;
+  final int minedInEpoch;
+  final String? txId;
+  final String? lastError;
 }
 """;
 

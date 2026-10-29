@@ -14,6 +14,7 @@ import 'package:cw_core/wallet_base.dart';
 import 'package:cw_core/wallet_info.dart';
 import 'package:cw_core/wallet_keys_file.dart';
 import 'package:cw_tari_ootle/pending_tari_ootle_transaction.dart';
+import 'package:cw_tari_ootle/src/rust/api/claim.dart' as bridge;
 import 'package:cw_tari_ootle/src/rust/api/send.dart' as bridge;
 import 'package:cw_tari_ootle/src/rust/api/sync.dart' as bridge;
 import 'package:cw_tari_ootle/src/rust/api/wallet.dart' as bridge;
@@ -66,6 +67,7 @@ abstract class TariOotleWalletBase
   final bool _isNewWallet;
 
   bool _isOpen = false;
+  String? _claimPublicKey;
   Node? _node;
   StreamSubscription<bridge.ScanEvent>? _scan;
   Timer? _rescanTimer;
@@ -147,6 +149,7 @@ abstract class TariOotleWalletBase
       ),
     );
     walletAddresses.address = info.address;
+    _claimPublicKey = info.claimPublicKey;
     _isOpen = true;
     await updateBalance();
     await updateTransactions();
@@ -262,6 +265,34 @@ abstract class TariOotleWalletBase
     unawaited(startSync());
     return txId;
   }
+
+  /// Open in the bridge, which claims need. Happens on the first connect to an indexer.
+  bool get isOpen => _isOpen;
+
+  /// Hex key that L1 burns to this wallet target; burn proof files are named after it.
+  String? get claimPublicKey => _claimPublicKey;
+
+  /// Stores an L1 burn proof to claim. Adding the same proof again is a no-op.
+  Future<bridge.ClaimDto> addBurnProof(String proofJson) =>
+      bridge.addBurnProof(name: walletInfo.name, proofJson: proofJson);
+
+  Future<List<bridge.ClaimDto>> getClaims() => bridge.getClaims(name: walletInfo.name);
+
+  /// The L2's current epoch; a claim is accepted once this is past the burn's mined_in_epoch.
+  Future<int> currentEpoch() async {
+    final node = _node;
+    if (node == null) throw Exception('No indexer connected');
+    return (await bridge.getCurrentEpoch(indexerUrl: node.uri.toString())).toInt();
+  }
+
+  /// Submits a claim and streams until it lands. A failure leaves it pending with last_error.
+  Stream<bridge.SendEvent> claimBurn(String claimId) =>
+      bridge.claimBurn(name: walletInfo.name, claimId: claimId).transform(
+        StreamTransformer.fromHandlers(handleDone: (sink) {
+          unawaited(startSync());
+          sink.close();
+        }),
+      );
 
   @override
   int calculateEstimatedFee(TransactionPriority priority, int? amount) => _lastFee?.toInt() ?? 0;
