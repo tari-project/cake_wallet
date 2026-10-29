@@ -158,7 +158,14 @@ class CWMinotari extends Minotari {
   Stream<String> burnToL2(Object wallet, {required String claimPublicKey, required int amount}) =>
       (wallet as MinotariWallet)
           .burnToL2(claimPublicKey: claimPublicKey, amount: amount)
-          .map((event) => event.details);
+          .map((event) => switch (event) {
+                BurnEvent_Stage(:final field0) => field0.details,
+                BurnEvent_Recorded(:final field0) => field0.acceptedByNode
+                    ? 'Burn broadcast.'
+                    : 'Burn recorded but the node has not accepted it yet'
+                        '${field0.nodeReason == null ? '' : ' (${field0.nodeReason})'}. '
+                        'The wallet rebroadcasts it while it syncs.',
+              });
 
   @override
   Future<List<MinotariBurn>> getBurns(Object wallet) async =>

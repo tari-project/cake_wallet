@@ -96,13 +96,15 @@ class _TariBurnPageState extends State<TariBurnPage> {
           CryptoCurrency.xtm);
       if (!mounted) return;
       if (!await _confirm(address, amount, fee)) return;
+      var last = '';
       await for (final message in minotari!.burnToL2(widget.wallet,
           claimPublicKey: claimKey, amount: amount.amount.toInt())) {
+        last = message;
         if (mounted) setState(() => _progress = message);
       }
       if (!mounted) return;
       setState(() {
-        _progress = 'Burn recorded. Once it has 3 confirmations, claim it from the Tari wallet '
+        _progress = '$last Once it has 3 confirmations, claim it from the Tari wallet '
             'that owns $address. Do not burn again.';
         _amount.clear();
       });

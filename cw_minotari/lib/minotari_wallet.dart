@@ -561,7 +561,7 @@ abstract class MinotariWalletBase
   ///
   /// The stream ends after the burn is recorded; an error means nothing was broadcast. The scan
   /// rebroadcasts a recorded burn the node did not accept, so never repeat one that completed.
-  Stream<SendTransactionEvent> burnToL2({
+  Stream<burn.BurnEvent> burnToL2({
     required String claimPublicKey,
     required int amount,
   }) {
