@@ -164,8 +164,10 @@ abstract class TariOotleWalletBase
     await _scan?.cancel();
     syncStatus = AttemptingSyncStatus();
     // A new scan replaces a running one inside the bridge too.
+    var ended = false;
     _scan = bridge.startScan(name: walletInfo.name).listen(
       (event) async {
+        if (event is! bridge.ScanEvent_Progress) ended = true;
         switch (event) {
           case bridge.ScanEvent_Progress():
             syncStatus = SyncronizingSyncStatus();
@@ -184,7 +186,14 @@ abstract class TariOotleWalletBase
         printV('[TariOotle] scan stream error: $e');
         syncStatus = FailedSyncStatus(error: e.toString());
       },
-      onDone: () => _scan = null,
+      onDone: () {
+        _scan = null;
+        // The bridge always ends a scan with Completed or Failed; anything else means it died.
+        if (!ended) {
+          printV('[TariOotle] scan ended without a result');
+          syncStatus = FailedSyncStatus(error: 'Scan ended unexpectedly');
+        }
+      },
     );
   }
 

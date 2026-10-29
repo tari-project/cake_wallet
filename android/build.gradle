@@ -3,6 +3,8 @@ allprojects {
         google()
         mavenCentral()
         maven { url "https://jitpack.io" }
+        // rustls-platform-verifier's Kotlin component, for cw_tari_ootle's TLS on Android.
+        maven { url "https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/" }
     }
 }
 

@@ -51,3 +51,8 @@ android {
         targetSdkVersion 34
     }
 }
+
+dependencies {
+    // Must equal rustls-platform-verifier-android in the bridge's Cargo.lock, or verification crashes at runtime.
+    implementation "org.rustls:rustls-platform-verifier:0.2.0"
+}

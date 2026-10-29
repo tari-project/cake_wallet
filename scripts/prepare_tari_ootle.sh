@@ -11,7 +11,7 @@ set -eu
 
 # Bump together with the bridge. Never build an unpinned HEAD.
 CW_TARI_OOTLE_REPO_URL="https://github.com/tari-project/cw_tari_ootle_wallet.git"
-CW_TARI_OOTLE_REV="26c844c15870fa6f778d17504f7b7392061c912e"
+CW_TARI_OOTLE_REV="3665de53ffc2ea7d9cfd21d4a1aa038d26bbc2f8"
 
 UPDATE=0
 for arg in "$@"; do
