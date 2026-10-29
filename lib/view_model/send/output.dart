@@ -10,6 +10,7 @@ import 'package:cake_wallet/entities/contact_base.dart';
 import 'package:cake_wallet/evm/evm.dart';
 import 'package:cake_wallet/generated/i18n.dart';
 import 'package:cake_wallet/minotari/minotari.dart';
+import 'package:cake_wallet/tari_ootle/tari_ootle.dart';
 import 'package:cake_wallet/reactions/wallet_connect.dart';
 import 'package:cake_wallet/solana/solana.dart';
 import 'package:cake_wallet/store/app_store.dart';
@@ -214,6 +215,11 @@ abstract class OutputBase with Store {
         case WalletType.minotari:
           estimatedFee =
               minotari!.getMinotariEstimatedFee(_wallet) ?? Money.zero(CryptoCurrency.xtm);
+          break;
+
+        case WalletType.tari:
+          estimatedFee =
+              tariOotle!.getTariOotleEstimatedFee(_wallet) ?? Money.zero(CryptoCurrency.tari);
           break;
 
         case WalletType.haven:

@@ -284,6 +284,7 @@ flutter:
     - assets/decred_node_list.yml
     - assets/dogecoin_electrum_server_list.yml
     - assets/minotari_node_list.yml
+    - assets/tari_ootle_node_list.yml
     - assets/base_node_list.yml
     - assets/arbitrum_node_list.yml
     - assets/zcash_node_list.yml

@@ -379,6 +379,7 @@ abstract class ExchangeTradeViewModelBase with Store {
       case WalletType.none:
       case WalletType.haven:
       case WalletType.minotari:
+      case WalletType.tari:
         return null;
     }
   }

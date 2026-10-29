@@ -39,6 +39,7 @@ String getQrImage(WalletType type) {
     case WalletType.zcash:
       return 'assets/images/zec_icon_qr.svg';
     case WalletType.minotari:
+    case WalletType.tari:
     case WalletType.banano:
     case WalletType.haven:
     case WalletType.none:

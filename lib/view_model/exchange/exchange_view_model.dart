@@ -1602,6 +1602,7 @@ abstract class ExchangeViewModelBase extends WalletChangeListenerViewModel with 
         depositCurrency = CryptoCurrency.xtm;
         receiveCurrency = CryptoCurrency.xmr;
         break;
+      case WalletType.tari: // no exchange lists Tari Ootle yet
       case WalletType.none:
         break;
     }

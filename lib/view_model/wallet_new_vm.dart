@@ -24,6 +24,7 @@ import 'package:cw_core/wallet_type.dart';
 import 'advanced_privacy_settings_view_model.dart';
 
 import '../minotari/minotari.dart';
+import '../tari_ootle/tari_ootle.dart';
 
 part 'wallet_new_vm.g.dart';
 
@@ -159,6 +160,8 @@ abstract class WalletNewVMBase extends WalletCreationVM with Store {
             password: walletPassword,
             passphrase: passphrase,
             mnemonic: newWalletArguments!.mnemonic);
+      case WalletType.tari:
+        return tariOotle!.createTariOotleNewWalletCredentials(name: name, password: walletPassword);
       case WalletType.minotari:
         return minotari!.createMinotariNewWalletCredentials(
           name: name,

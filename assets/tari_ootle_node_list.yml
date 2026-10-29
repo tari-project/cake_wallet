@@ -1,0 +1,11 @@
+-
+  uri: esme-indexer-a.ootle.tari.com
+  useSSL: true
+  isDefault: true
+  isEnabledForAutoSwitching: true
+  label: "Tari Ootle Esmeralda A"
+-
+  uri: esme-indexer-b.ootle.tari.com
+  useSSL: true
+  isEnabledForAutoSwitching: true
+  label: "Tari Ootle Esmeralda B"

@@ -13,6 +13,7 @@ const dogecoinOutputPath = 'lib/dogecoin/dogecoin.dart';
 const evmOutputPath = 'lib/evm/evm.dart';
 const zcashOutputPath = 'lib/zcash/zcash.dart';
 const minotariOutputPath = 'lib/minotari/minotari.dart';
+const tariOotleOutputPath = 'lib/tari_ootle/tari_ootle.dart';
 const walletTypesPath = 'lib/wallet_types.g.dart';
 const secureStoragePath = 'lib/core/secure_storage.dart';
 const pubspecDefaultPath = 'pubspec_default.yaml';
@@ -39,6 +40,7 @@ Future<void> main(List<String> args) async {
   final hasRobinhood = args.contains("${prefix}robinhood");
   final hasZcash = args.contains('${prefix}zcash');
   final hasMinotari = args.contains('${prefix}minotari');
+  final hasTariOotle = args.contains('${prefix}tari');
   final hasEVM = hasEthereum || hasPolygon || hasBase || hasArbitrum || hasBsc || hasRobinhood;
   final excludeFlutterSecureStorage = args.contains('${prefix}excludeFlutterSecureStorage');
 
@@ -56,6 +58,7 @@ Future<void> main(List<String> args) async {
   await generateEVM(hasEVM);
   await generateZcash(hasZcash);
   await generateMinotari(hasMinotari);
+  await generateTariOotle(hasTariOotle);
 
   await generatePubspec(
     hasMonero: hasMonero,
@@ -78,6 +81,7 @@ Future<void> main(List<String> args) async {
     hasRobinhood: hasRobinhood,
     hasZcash: hasZcash,
     hasMinotari: hasMinotari,
+    hasTariOotle: hasTariOotle,
   );
   await generateWalletTypes(
     hasMonero: hasMonero,
@@ -99,6 +103,7 @@ Future<void> main(List<String> args) async {
     hasRobinhood: hasRobinhood,
     hasZcash: hasZcash,
     hasMinotari: hasMinotari,
+    hasTariOotle: hasTariOotle,
   );
   await injectSecureStorage(!excludeFlutterSecureStorage);
 }
@@ -1954,6 +1959,64 @@ abstract class Minotari {
   await outputFile.writeAsString(output);
 }
 
+Future<void> generateTariOotle(bool hasImplementation) async {
+  final outputFile = File(tariOotleOutputPath);
+  const tariOotleCommonHeaders = """
+import 'package:cake_wallet/view_model/send/output.dart';
+import 'package:cw_core/amount/money.dart';
+import 'package:cw_core/wallet_credentials.dart';
+import 'package:cw_core/wallet_info.dart';
+import 'package:cw_core/wallet_service.dart';
+""";
+  const tariOotleCWHeaders = """
+import 'package:cw_core/output_info.dart';
+import 'package:cw_tari_ootle/pending_tari_ootle_transaction.dart';
+import 'package:cw_tari_ootle/tari_ootle_wallet.dart';
+import 'package:cw_tari_ootle/tari_ootle_wallet_service.dart';
+""";
+  const tariOotleCwPart = "part 'cw_tari_ootle.dart';";
+  const tariOotleContent = """
+/// Tari Ootle, the Tari layer 2 (WalletType.tari). Minotari, the L1, lives in lib/minotari.
+abstract class TariOotle {
+  WalletService createTariOotleWalletService();
+
+  WalletCredentials createTariOotleNewWalletCredentials({
+    required String name,
+    String? password,
+    WalletInfo? walletInfo,
+  });
+
+  WalletCredentials createTariOotleRestoreWalletFromSeedCredentials({
+    required String name,
+    required String password,
+    required String mnemonic,
+    WalletInfo? walletInfo,
+  });
+
+  Object createTariOotleTransactionCredentials(List<Output> outputs);
+
+  /// The fee of the wallet's last priced send, if any.
+  Money? getTariOotleEstimatedFee(Object wallet);
+}
+""";
+
+  const tariOotleEmptyDefinition = 'TariOotle? tariOotle;\n';
+  const tariOotleCWDefinition = 'TariOotle? tariOotle = CWTariOotle();\n';
+
+  final output = '$tariOotleCommonHeaders\n' +
+      (hasImplementation ? '$tariOotleCWHeaders\n' : '\n') +
+      (hasImplementation ? '$tariOotleCwPart\n\n' : '\n') +
+      (hasImplementation ? tariOotleCWDefinition : tariOotleEmptyDefinition) +
+      '\n' +
+      tariOotleContent;
+
+  if (outputFile.existsSync()) {
+    await outputFile.delete();
+  }
+
+  await outputFile.writeAsString(output);
+}
+
 Future<void> generatePubspec({
   required bool hasMonero,
   required bool hasBitcoin,
@@ -1975,6 +2038,7 @@ Future<void> generatePubspec({
   required bool hasRobinhood,
   required bool hasZcash,
   required bool hasMinotari,
+  required bool hasTariOotle,
 }) async {
   const cwCore = """
   cw_core:
@@ -2042,6 +2106,10 @@ Future<void> generatePubspec({
   const cwMinotari = """
   cw_minotari:
       path: ./cw_minotari
+  """;
+  const cwTariOotle = """
+  cw_tari_ootle:
+      path: ./cw_tari_ootle
   """;
 
   final inputFile = File(pubspecOutputPath);
@@ -2113,6 +2181,10 @@ Future<void> generatePubspec({
     output += '\n$cwMinotari';
   }
 
+  if (hasTariOotle) {
+    output += '\n$cwTariOotle';
+  }
+
   final outputLines = output.split('\n');
   inputLines.insertAll(dependenciesIndex + 1, outputLines);
   final outputContent = inputLines.join('\n');
@@ -2145,6 +2217,7 @@ Future<void> generateWalletTypes({
   required bool hasRobinhood,
   required bool hasZcash,
   required bool hasMinotari,
+  required bool hasTariOotle,
 }) async {
   final walletTypesFile = File(walletTypesPath);
 
@@ -2230,6 +2303,10 @@ Future<void> generateWalletTypes({
 
   if (hasMinotari) {
     outputContent += '\tWalletType.minotari,\n';
+  }
+
+  if (hasTariOotle) {
+    outputContent += '\tWalletType.tari,\n';
   }
 
   // if (hasWownero) {

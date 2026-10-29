@@ -36,6 +36,7 @@ List<TransactionPriority> priorityForWalletType(WalletType type) {
     case WalletType.banano:
     case WalletType.solana:
     case WalletType.tron:
+    case WalletType.tari:
       return [];
     case WalletType.minotari:
       return minotari!.getTransactionPriorities();

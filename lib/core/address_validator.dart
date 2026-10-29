@@ -10,6 +10,10 @@ import 'package:cw_core/erc20_token.dart';
 const BEFORE_REGEX = '(^|\\s)';
 const AFTER_REGEX = '(\$|\\s)';
 
+/// Bech32m with an `otl_` HRP plus an optional network tag (`otl_esm_1...` on Esmeralda). The
+/// wallet checks the checksum and network with the bridge before it prices a send.
+const tariOotleAddressPattern = 'otl_(?:[a-z]{3}_)?1[02-9ac-hj-np-z]{50,200}';
+
 class AddressValidator extends TextValidator {
   AddressValidator({
     required CryptoCurrency type,
@@ -202,6 +206,8 @@ class AddressValidator extends TextValidator {
         pattern = r'([1-9A-HJ-NP-Za-km-z]{90,200})|(@[\w\d.-]+)';
       case CryptoCurrency.doge:
         pattern = r'^D[a-km-zA-HJ-NP-Z1-9]{25,34}';
+      case CryptoCurrency.tari:
+        pattern = tariOotleAddressPattern;
       case CryptoCurrency.xtm:
         // RFC-0155: Tari addresses support multiple formats:
         // - Simplified (35 bytes) ~47 Base58 chars
@@ -411,6 +417,8 @@ class AddressValidator extends TextValidator {
         pattern = "(?:$zcashAddressPattern|zxviews[a-z0-9]{278})";
       case CryptoCurrency.xtm:
         pattern = '[123Hdf][234678][1-9A-HJ-NP-Za-km-z]{45,448}';
+      case CryptoCurrency.tari:
+        pattern = tariOotleAddressPattern;
       default:
         if (type.tag == CryptoCurrency.eth.title) {
           pattern = '0x[0-9a-zA-Z]+';

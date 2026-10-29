@@ -244,6 +244,7 @@ abstract class HomeSettingsViewModelBase with Store {
       case WalletType.dogecoin:
       case WalletType.zcash:
       case WalletType.minotari:
+      case WalletType.tari:
         return false;
     }
 
@@ -287,6 +288,7 @@ abstract class HomeSettingsViewModelBase with Store {
       case WalletType.dogecoin:
       case WalletType.zcash:
       case WalletType.minotari:
+      case WalletType.tari:
         return false;
     }
 

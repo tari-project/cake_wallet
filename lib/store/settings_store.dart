@@ -1453,6 +1453,7 @@ abstract class SettingsStoreBase with Store {
     final decredNodeId = sharedPreferences.getInt(PreferencesKey.currentDecredNodeIdKey);
     final dogecoinNodeId = sharedPreferences.getInt(PreferencesKey.currentDogecoinNodeIdKey);
     final minotariNodeId = sharedPreferences.getInt(PreferencesKey.currentMinotariNodeIdKey);
+    final tariOotleNodeId = sharedPreferences.getInt(PreferencesKey.currentTariOotleNodeIdKey);
 
     final nodeSource = await Node.getAll();
     final powNodeSource = await Node.getAllPow();
@@ -1501,6 +1502,8 @@ abstract class SettingsStoreBase with Store {
         nodeSource.firstWhereOrNull((e) => e.uriRaw == robinhoodDefaultNodeUri);
     final minotariNode = nodeSource.firstWhereOrNull((e) => e.id == minotariNodeId) ??
         nodeSource.firstWhereOrNull((e) => e.uriRaw == minotariDefaultNodeUri);
+    final tariOotleNode = nodeSource.firstWhereOrNull((e) => e.id == tariOotleNodeId) ??
+        nodeSource.firstWhereOrNull((e) => e.uriRaw == tariOotleDefaultNodeUri);
 
     final packageInfo = await PackageInfo.fromPlatform();
     final deviceName = await _getDeviceName() ?? '';
@@ -1615,6 +1618,10 @@ abstract class SettingsStoreBase with Store {
 
     if (minotariNode != null) {
       nodes[WalletType.minotari] = minotariNode;
+    }
+
+    if (tariOotleNode != null) {
+      nodes[WalletType.tari] = tariOotleNode;
     }
 
     final savedSyncMode = SyncMode.all.firstWhere((element) {
@@ -2090,6 +2097,7 @@ abstract class SettingsStoreBase with Store {
     final decredNodeId = sharedPreferences.getInt(PreferencesKey.currentDecredNodeIdKey);
     final dogecoinNodeId = sharedPreferences.getInt(PreferencesKey.currentDogecoinNodeIdKey);
     final minotariNodeId = sharedPreferences.getInt(PreferencesKey.currentMinotariNodeIdKey);
+    final tariOotleNodeId = sharedPreferences.getInt(PreferencesKey.currentTariOotleNodeIdKey);
     final moneroNode = await Node.get(nodeId ?? -1);
     final bitcoinElectrumServer = await Node.get(bitcoinElectrumServerId ?? -1);
     final litecoinElectrumServer = await Node.get(litecoinElectrumServerId ?? -1);
@@ -2110,6 +2118,7 @@ abstract class SettingsStoreBase with Store {
     final decredNode = await Node.get(decredNodeId ?? -1);
     final dogecoinNode = await Node.get(dogecoinNodeId ?? -1);
     final minotariNode = await Node.get(minotariNodeId ?? -1);
+    final tariOotleNode = await Node.get(tariOotleNodeId ?? -1);
 
     if (moneroNode != null) {
       nodes[WalletType.monero] = moneroNode;
@@ -2189,6 +2198,10 @@ abstract class SettingsStoreBase with Store {
 
     if (minotariNode != null) {
       nodes[WalletType.minotari] = minotariNode;
+    }
+
+    if (tariOotleNode != null) {
+      nodes[WalletType.tari] = tariOotleNode;
     }
 
     // MIGRATED:
@@ -2340,6 +2353,9 @@ abstract class SettingsStoreBase with Store {
         break;
       case WalletType.minotari:
         await _sharedPreferences.setInt(PreferencesKey.currentMinotariNodeIdKey, node.id);
+        break;
+      case WalletType.tari:
+        await _sharedPreferences.setInt(PreferencesKey.currentTariOotleNodeIdKey, node.id);
         break;
       case WalletType.zcash:
         await _sharedPreferences.setInt(PreferencesKey.currentZcashNodeIdKey, node.id);

@@ -65,6 +65,7 @@ class WalletRestoreFromQRCode {
     'minotari': WalletType.minotari,
     'minotari-wallet': WalletType.minotari,
     'minotari_wallet': WalletType.minotari,
+    'tari-ootle-wallet': WalletType.tari,
   };
 
   static WalletType? _extractWalletType(String code) {

@@ -13,6 +13,7 @@ import 'package:cake_wallet/store/app_store.dart';
 import 'package:cake_wallet/tron/tron.dart';
 import 'package:cake_wallet/decred/decred.dart';
 import 'package:cake_wallet/minotari/minotari.dart';
+import 'package:cake_wallet/tari_ootle/tari_ootle.dart';
 import 'package:cake_wallet/utils/feature_flag.dart';
 import 'package:cake_wallet/view_model/restore/restore_mode.dart';
 import 'package:cake_wallet/view_model/restore/restore_wallet.dart';
@@ -67,6 +68,7 @@ abstract class WalletRestoreViewModelBase extends WalletCreationVM with Store {
       case WalletType.bitcoinCash:
       case WalletType.zano:
       case WalletType.dogecoin:
+      case WalletType.tari:
         availableModes = [WalletRestoreMode.seed];
         break;
       case WalletType.none:
@@ -239,6 +241,9 @@ abstract class WalletRestoreViewModelBase extends WalletCreationVM with Store {
             height: height,
             network: zcashNetwork,
           );
+        case WalletType.tari:
+          return tariOotle!.createTariOotleRestoreWalletFromSeedCredentials(
+              name: name, password: password, mnemonic: seed);
         case WalletType.minotari:
           return minotari!.createMinotariRestoreWalletFromSeedCredentials(
               name: name,

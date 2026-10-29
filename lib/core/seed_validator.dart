@@ -57,6 +57,7 @@ class SeedValidator extends Validator<MnemonicItem> {
       case WalletType.zcash:
         return zcash!.getZcashWordList(language);
       case WalletType.minotari:
+      case WalletType.tari:
         return getBitcoinWordList(language);
       case WalletType.none:
       case WalletType.haven:

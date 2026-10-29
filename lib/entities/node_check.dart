@@ -27,6 +27,7 @@ const Map<WalletType, String> nodePreferenceKeys = {
   WalletType.zano: PreferencesKey.currentZanoNodeIdKey,
   WalletType.zcash: PreferencesKey.currentZcashNodeIdKey,
   WalletType.minotari: PreferencesKey.currentMinotariNodeIdKey,
+  WalletType.tari: PreferencesKey.currentTariOotleNodeIdKey,
 };
 
 const Map<WalletType, String> powNodePreferenceKeys = {

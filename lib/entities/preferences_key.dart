@@ -17,6 +17,7 @@ class PreferencesKey {
   static const currentBscNodeIdKey = 'current_node_id_bsc';
   static const currentRobinhoodNodeIdKey = "current_node_id_robinhood";
   static const currentMinotariNodeIdKey = 'current_node_id_xtm';
+  static const currentTariOotleNodeIdKey = 'current_node_id_tari_ootle';
   static const currentNanoNodeIdKey = 'current_node_id_nano';
   static const currentNanoPowNodeIdKey = 'current_node_id_nano_pow';
   static const currentDecredNodeIdKey = 'current_node_id_decred';

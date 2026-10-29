@@ -68,8 +68,10 @@ String _minotariCounterparty(TransactionDetailsViewModelBase vm) {
 String _minotariInfo(TransactionDetailsViewModelBase vm, String field) =>
     vm.transactionInfo.additionalInfo[field] as String? ?? "";
 
+/// Status and message rows are shared by Minotari and Tari Ootle, which fill the same keys.
 bool _hasMinotariInfo(TransactionDetailsViewModelBase vm, String field) =>
-    vm.wallet.type == WalletType.minotari && _minotariInfo(vm, field).isNotEmpty;
+    [WalletType.minotari, WalletType.tari].contains(vm.wallet.type) &&
+    _minotariInfo(vm, field).isNotEmpty;
 
 class TxDetailRowDefinition {
   TxDetailRowDefinition({
@@ -564,6 +566,7 @@ abstract class TransactionDetailsViewModelBase with Store {
         return "https://blockchair.com/zcash/transaction/${txId}";
       case WalletType.minotari:
         return 'https://explore.tari.com/search?hash=${txId}';
+      case WalletType.tari: // TODO: link a Tari Ootle explorer once there is a public one
       case WalletType.none:
         return "";
     }

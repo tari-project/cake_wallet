@@ -11,7 +11,7 @@ build_models() {
 }
 export -f build_models
 
-for cwcoin in cw_{core,evm,monero,bitcoin,nano,bitcoin_cash,solana,tron,wownero,zano,decred,dogecoin,zcash,minotari}
+for cwcoin in cw_{core,evm,monero,bitcoin,nano,bitcoin_cash,solana,tron,wownero,zano,decred,dogecoin,zcash,minotari,tari_ootle}
 do
     if [[ "x$1" == "xasync" ]];
     then

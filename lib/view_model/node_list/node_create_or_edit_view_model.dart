@@ -145,6 +145,7 @@ abstract class NodeCreateOrEditViewModelBase with Store {
       case WalletType.decred:
       case WalletType.zcash:
       case WalletType.minotari:
+      case WalletType.tari:
         return false;
     }
   }

@@ -238,6 +238,7 @@ abstract class WalletKeysViewModelBase with Store {
       case WalletType.minotari:
         keys = minotari!.getKeys(_wallet);
         break;
+      case WalletType.tari: // the seed is the only key
       case WalletType.none:
       case WalletType.haven:
         break;
@@ -345,6 +346,8 @@ abstract class WalletKeysViewModelBase with Store {
         return 'zcash-wallet';
       case WalletType.minotari:
         return 'minotari-wallet';
+      case WalletType.tari:
+        return 'tari-ootle-wallet';
       case WalletType.none:
         throw BadWalletTypeException('Unexpected wallet type: ${_wallet.type.toString()} for wallet keys', _wallet.type);
     }

@@ -59,6 +59,7 @@ const bscDefaultNodeUri = 'bsc-dataseed.bnbchain.org';
 const robinhoodDefaultNodeUri = "robinhood-rpc.publicnode.com";
 const zcashDefaultNodeUri = 'zec.rocks:443';
 const minotariDefaultNodeUri = 'rpc.tari.com';
+const tariOotleDefaultNodeUri = 'esme-indexer-a.ootle.tari.com';
 
 Future<void> defaultSettingsMigration(
     {required int version,
@@ -667,6 +668,14 @@ Future<void> defaultSettingsMigration(
             sharedPreferences: sharedPreferences,
             type: WalletType.minotari,
             currentNodePreferenceKey: PreferencesKey.currentMinotariNodeIdKey,
+          );
+          break;
+        case 74:
+          await addWalletNodeList(type: WalletType.tari);
+          await _changeDefaultNode(
+            sharedPreferences: sharedPreferences,
+            type: WalletType.tari,
+            currentNodePreferenceKey: PreferencesKey.currentTariOotleNodeIdKey,
           );
           break;
         default:
