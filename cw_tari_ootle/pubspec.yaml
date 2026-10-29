@@ -1,0 +1,32 @@
+name: cw_tari_ootle
+description: Tari Ootle (L2) wallet integration for Cake Wallet
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  mobx: ^2.3.3+2
+  cw_core:
+    path: ../cw_core
+  flutter_rust_bridge: 2.11.1
+  freezed_annotation: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.15.0
+  mobx_codegen: ^2.7.7
+  freezed: ^3.2.5
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.cakewallet.cw_tari_ootle
+        pluginClass: CwTariOotlePlugin
+      ios:
+        pluginClass: CwTariOotlePlugin

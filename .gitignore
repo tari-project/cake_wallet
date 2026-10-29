@@ -83,6 +83,7 @@ cw_monero/ios/External/
 cw_monero/cw_monero/android/.externalNativeBuild/
 cw_monero/cw_monero/android/.cxx/
 cw_minotari/ios/Frameworks/
+cw_tari_ootle/ios/Frameworks/
 
 # Generated dart files
 **/*.g.dart
@@ -153,6 +154,7 @@ lib/arbitrum/arbitrum.dart
 lib/evm/evm.dart
 lib/zcash/zcash.dart
 lib/minotari/minotari.dart
+lib/tari_ootle/tari_ootle.dart
 
 ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
 ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png
