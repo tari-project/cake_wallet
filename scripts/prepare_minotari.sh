@@ -1,5 +1,6 @@
 # Intended to be sourced from any POSIX-like shell:
 #   . scripts/prepare_minotari.sh [--update]
+#   CW_TARI_WALLET_PATH=/path/to/cw_tari_wallet . scripts/prepare_minotari.sh
 
 #######################################
 # Safety
@@ -42,21 +43,35 @@ PROJECT_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
 CW_PARENT_DIR="$PROJECT_ROOT/cw_minotari"
 CW_RUST_DIR="$CW_PARENT_DIR/rust"
 CW_REPO_URL="https://github.com/tari-project/cw_tari_wallet.git"
-
+# Bump together with the bridge. Never build an unpinned HEAD.
+CW_REV="6d4c9757731e60ef298bd16c852ccceb9e084186"
 
 #######################################
 # cw_tari_wallet setup
+#
+# CW_TARI_WALLET_PATH=/path/to/cw_tari_wallet builds a local checkout instead of the
+# pinned rev. Its tracked files are copied (keeping target/ for incremental builds), so
+# codegen and builds never write into that checkout.
 #######################################
 
 mkdir -p "$CW_PARENT_DIR"
 
-if [ "$UPDATE_CW" -eq 1 ] && [ -d "$CW_RUST_DIR" ]; then
-  echo "🔄 --update specified: removing cw_minotari/rust"
-  rm -rf "$CW_RUST_DIR"
-fi
-
-if [ ! -d "$CW_RUST_DIR" ]; then
-  git clone "$CW_REPO_URL" "$CW_RUST_DIR"
+if [ -n "${CW_TARI_WALLET_PATH:-}" ]; then
+  echo "Copying tracked files of the local bridge checkout $CW_TARI_WALLET_PATH"
+  mkdir -p "$CW_RUST_DIR"
+  find "$CW_RUST_DIR" -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} +
+  git -C "$CW_TARI_WALLET_PATH" ls-files -z | (cd "$CW_TARI_WALLET_PATH" && xargs -0 tar -cf -) | tar -xf - -C "$CW_RUST_DIR"
+else
+  if [ "$UPDATE_CW" -eq 1 ]; then
+    echo "🔄 --update specified: removing cw_minotari/rust"
+    rm -rf "$CW_RUST_DIR"
+  fi
+  if [ ! -d "$CW_RUST_DIR/.git" ]; then
+    rm -rf "$CW_RUST_DIR"
+    git clone "$CW_REPO_URL" "$CW_RUST_DIR"
+  fi
+  git -C "$CW_RUST_DIR" cat-file -e "$CW_REV^{commit}" 2>/dev/null || git -C "$CW_RUST_DIR" fetch origin
+  git -C "$CW_RUST_DIR" checkout --detach "$CW_REV"
 fi
 
 #######################################
