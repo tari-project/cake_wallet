@@ -57,6 +57,8 @@ class WalletTypeAdapter extends TypeAdapter<WalletType> {
         return WalletType.robinhood;
       case 21:
         return WalletType.minotari;
+      case 22:
+        return WalletType.tari;
       default:
         return WalletType.monero;
     }
@@ -130,6 +132,9 @@ class WalletTypeAdapter extends TypeAdapter<WalletType> {
         break;
       case WalletType.minotari:
         writer.writeByte(21);
+        break;
+      case WalletType.tari:
+        writer.writeByte(22);
         break;
     }
   }

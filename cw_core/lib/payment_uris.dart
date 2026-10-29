@@ -124,6 +124,20 @@ class MinotariURI extends PaymentURI {
   }                                                                                                                                                                                       
 } 
 
+// TODO: no URI scheme is standardised for Tari Ootle yet; "tari:" is left to Tari's own wallets.
+class TariOotleURI extends PaymentURI {
+  TariOotleURI({required super.amount, required super.address});
+
+  @override
+  String toString() {
+    var base = 'ootle:$address';
+    if (amount.isNotEmpty) {
+      base += '?amount=${amount.replaceAll(',', '.')}';
+    }
+    return base;
+  }
+}
+
 class NanoURI extends PaymentURI {
   NanoURI({required super.amount, required super.address});
 

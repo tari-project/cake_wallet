@@ -300,6 +300,7 @@ class Node {
       case WalletType.zano:
       case WalletType.decred:
       case WalletType.minotari:
+      case WalletType.tari:
         return Uri.parse(
             "http${isSSL ? "s" : ""}://$uriRaw${path!.startsWith("/") || path!.isEmpty ? path : "/$path"}");
       case WalletType.none:
@@ -366,11 +367,25 @@ class Node {
           return requestZanoNode();
         case WalletType.decred:
           return requestDecredNode();
+        case WalletType.tari:
+          return requestTariOotleIndexer();
         case WalletType.minotari:
         case WalletType.none:
           return false;
       }
     } catch (_) {
+      return false;
+    }
+  }
+
+  /// A Tari Ootle node is an indexer; `GET /health` answers `{"status":"ok"}` when it is up.
+  Future<bool> requestTariOotleIndexer() async {
+    try {
+      final response = await ProxyWrapper().get(clearnetUri: uri.replace(path: '/health'));
+      final body = json.decode(response.body) as Map<String, dynamic>;
+      return response.statusCode == 200 && body['status'] == 'ok';
+    } catch (e) {
+      printV("error: $e");
       return false;
     }
   }

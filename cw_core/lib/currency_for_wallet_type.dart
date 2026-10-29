@@ -53,6 +53,8 @@ CryptoCurrency walletTypeToCryptoCurrency(WalletType type, {bool isTestnet = fal
       return CryptoCurrency.zec;
     case WalletType.minotari:
       return CryptoCurrency.xtm;
+    case WalletType.tari:
+      return CryptoCurrency.tari;
     case WalletType.none:
       throw BadWalletTypeException(
           'Unexpected wallet type: ${type.toString()} for CryptoCurrency walletTypeToCryptoCurrency', type);
@@ -166,6 +168,7 @@ String? symbolIconPathForWalletType(WalletType type) {
     case WalletType.haven:
     case WalletType.banano:
     case WalletType.minotari:
+    case WalletType.tari:
     case WalletType.none:
       return null;
   }

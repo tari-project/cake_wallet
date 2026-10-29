@@ -67,6 +67,9 @@ Future<List<Node>> loadDefaultNodes(WalletType type) async {
     case WalletType.minotari:
       path = 'assets/minotari_node_list.yml';
       break;
+    case WalletType.tari:
+      path = 'assets/tari_ootle_node_list.yml';
+      break;
     case WalletType.banano:
     case WalletType.none:
       path = '';
@@ -134,6 +137,7 @@ Future<List<Node>> loadAllDefaultNodes() async {
   final bscNodes = await loadDefaultNodes(WalletType.bsc);
   final robinhoodNodes = await loadDefaultNodes(WalletType.robinhood);
   final minotariNodes = await loadDefaultNodes(WalletType.minotari);
+  final tariOotleNodes = await loadDefaultNodes(WalletType.tari);
 
   return moneroNodes +
       bitcoinElectrumServerList +
@@ -153,7 +157,8 @@ Future<List<Node>> loadAllDefaultNodes() async {
       zcashNodes +
       bscNodes +
       robinhoodNodes +
-      minotariNodes;
+      minotariNodes +
+      tariOotleNodes;
 }
 
 Future<void> resetToDefault() async {

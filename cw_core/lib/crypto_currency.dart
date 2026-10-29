@@ -148,6 +148,7 @@ class CryptoCurrency extends EnumerableItem<int> with Serializable<int> implemen
     CryptoCurrency.usdtArb,
     CryptoCurrency.robEth,
     CryptoCurrency.xtm,
+    CryptoCurrency.tari,
   ];
 
   static const havenCurrencies = [
@@ -995,6 +996,15 @@ class CryptoCurrency extends EnumerableItem<int> with Serializable<int> implemen
       fullName: 'Minotari',
       raw: 112,
       name: 'xtm',
+      iconPath: 'assets/images/crypto/minotari.webp',
+      decimals: 6);
+
+  /// Tari Ootle (L2). Amounts are µT; XTM above is the L1 coin.
+  static const tari = CryptoCurrency(
+      title: 'TARI',
+      fullName: 'Tari',
+      raw: 113,
+      name: 'tari',
       iconPath: 'assets/images/crypto/minotari.webp',
       decimals: 6);
 

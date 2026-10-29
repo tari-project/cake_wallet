@@ -27,6 +27,7 @@ const walletTypes = [
   WalletType.bsc,
   WalletType.robinhood,
   WalletType.minotari,
+  WalletType.tari,
 ];
 
 const electrumWalletTypes = [
@@ -112,6 +113,10 @@ enum WalletType {
 
   // @HiveField(21)
   minotari,
+
+  /// Tari Ootle, the Tari layer 2. Not Minotari (WalletType.minotari, the L1).
+  @HiveField(22)
+  tari,
 }
 
 int serializeToInt(WalletType type) {
@@ -158,6 +163,8 @@ int serializeToInt(WalletType type) {
       return 19;
     case WalletType.minotari:
       return 20;
+    case WalletType.tari:
+      return 21;
     case WalletType.none:
       return -1;
   }
@@ -207,6 +214,8 @@ WalletType deserializeFromInt(int raw) {
       return WalletType.robinhood;
     case 20:
       return WalletType.minotari;
+    case 21:
+      return WalletType.tari;
     default:
       throw DeserializeException('Unexpected token: $raw for WalletType deserializeFromInt');
   }
@@ -256,6 +265,8 @@ String walletTypeToString(WalletType type) {
       return "Robinhood Chain";
     case WalletType.minotari:
       return 'Minotari';
+    case WalletType.tari:
+      return 'Tari';
     case WalletType.none:
       return '';
   }
@@ -283,6 +294,7 @@ String walletTypeToDisplayName(WalletType type) => switch (type) {
       WalletType.bsc => 'BNB Smart Chain',
       WalletType.robinhood => "Robinhood Chain",
       WalletType.minotari => 'Minotari',
+      WalletType.tari => 'Tari',
       WalletType.none => ''
     };
 
@@ -308,6 +320,7 @@ String walletTypeToDisplayTicker(WalletType type) => switch (type) {
       WalletType.bsc => 'BNB',
       WalletType.robinhood => "",
       WalletType.minotari => 'XTM',
+      WalletType.tari => 'TARI',
       WalletType.none => ''
     };
 
@@ -357,6 +370,8 @@ WalletType? _cryptoCurrencyToWalletType(CryptoCurrency type) {
       return WalletType.robinhood;
     case CryptoCurrency.xtm:
       return WalletType.minotari;
+    case CryptoCurrency.tari:
+      return WalletType.tari;
     default:
       return null;
   }
