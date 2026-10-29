@@ -12,6 +12,8 @@ import "package:cake_wallet/new-ui/pages/buy_sell/buy_sell_amount_page.dart";
 import 'package:cake_wallet/new-ui/pages/coin_control_page.dart';
 import 'package:cake_wallet/new-ui/pages/addresses_page.dart';
 import 'package:cake_wallet/new-ui/pages/lightning_username_page.dart';
+import 'package:cake_wallet/new-ui/pages/tari_burn_page.dart';
+import 'package:cake_wallet/new-ui/pages/tari_claim_page.dart';
 import "package:cake_wallet/new-ui/pages/seed/pre_seed_page.dart";
 import "package:cake_wallet/new-ui/pages/seed/show_keys_disclaimer_page.dart";
 import "package:cake_wallet/new-ui/pages/receive_page.dart";
@@ -137,6 +139,7 @@ import 'package:cake_wallet/view_model/wallet_hardware_restore_view_model.dart';
 import 'package:cake_wallet/view_model/wallet_new_vm.dart';
 import 'package:cake_wallet/wallet_type_utils.dart';
 import 'package:cake_wallet/wallet_types.g.dart';
+import 'package:cw_core/wallet_base.dart';
 import 'package:cw_core/node.dart';
 import 'package:cw_core/transaction_info.dart';
 import 'package:cw_core/unspent_coin_type.dart';
@@ -398,6 +401,14 @@ Route<dynamic> createRoute(RouteSettings settings) {
           ),
         ),
       );
+
+    case Routes.tariBurnPage:
+      return handleRouteWithPlatformAwareness(
+          (context) => TariBurnPage(wallet: settings.arguments as WalletBase));
+
+    case Routes.tariClaimPage:
+      return handleRouteWithPlatformAwareness(
+          (context) => TariClaimPage(wallet: settings.arguments as WalletBase));
 
     case Routes.lightningUsernamePage:
       return handleRouteWithPlatformAwareness(

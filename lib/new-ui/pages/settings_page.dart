@@ -2,12 +2,14 @@ import "package:cake_wallet/core/auth_service.dart";
 import "package:cake_wallet/entities/new_ui_entities/list_item/list_item.dart";
 import "package:cake_wallet/entities/new_ui_entities/list_item/list_item_regular_row.dart";
 import "package:cake_wallet/generated/i18n.dart";
+import "package:cake_wallet/minotari/minotari.dart";
 import "package:cake_wallet/new-ui/modal_navigator.dart";
 import "package:cake_wallet/new-ui/pages/coin_control_page.dart";
 import "package:cake_wallet/new-ui/widgets/receive_page/receive_top_bar.dart";
 import "package:cake_wallet/routes.dart";
 import "package:cake_wallet/src/widgets/cake_image_widget.dart";
 import "package:cake_wallet/src/widgets/new_list_row/new_list_section.dart";
+import "package:cake_wallet/tari_ootle/tari_ootle.dart";
 import "package:cake_wallet/view_model/dashboard/dashboard_view_model.dart";
 import "package:cw_core/wallet_info.dart";
 import "package:cw_core/wallet_type.dart";
@@ -21,6 +23,12 @@ bool _hasLightning(DashboardViewModel vm) => vm.hasLightning;
 bool _hasSilentPayments(DashboardViewModel vm) => vm.hasSilentPayments;
 
 bool _hasMweb(DashboardViewModel vm) => vm.hasMweb;
+
+/// Burning to L2 needs both bridges, so both coins must be in this build.
+bool _canBurnToTari(DashboardViewModel vm) =>
+    vm.wallet.type == WalletType.minotari && minotari != null && tariOotle != null;
+
+bool _isTari(DashboardViewModel vm) => vm.wallet.type == WalletType.tari;
 
 bool _hasWalletConnect(DashboardViewModel vm) => vm.hasWalletConnect;
 
@@ -114,6 +122,20 @@ class WalletSettingsResolver {
         "Lightning ${S.current.username}",
         Routes.lightningUsernamePage,
         condition: _hasLightning,
+      ),
+      SettingsListItem(
+        "assets/new-ui/settings_row_icons/other.svg",
+        "Move to Tari L2",
+        Routes.tariBurnPage,
+        condition: _canBurnToTari,
+        routeArgsBuilder: (vm) => vm.wallet,
+      ),
+      SettingsListItem(
+        "assets/new-ui/settings_row_icons/other.svg",
+        "Claim from L1",
+        Routes.tariClaimPage,
+        condition: _isTari,
+        routeArgsBuilder: (vm) => vm.wallet,
       ),
       SettingsListItem(
         "assets/new-ui/settings_row_icons/silent-payments.svg",
