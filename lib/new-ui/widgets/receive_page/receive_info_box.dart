@@ -28,6 +28,7 @@ class ReceiveInfoBox extends StatelessWidget {
       bool addressRotates = true}) {
     switch (type) {
       case WalletType.nano:
+      case WalletType.tari: // one Ootle address per wallet, it never rotates
         return null;
       case WalletType.ethereum:
       case WalletType.base:
