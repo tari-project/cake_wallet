@@ -332,13 +332,13 @@ abstract class MinotariWalletBase
         ? output.extractedAddress ?? output.address
         : output.address;
 
-    // Calculate amount - handle sendAll and nullable formattedCryptoAmount
+    // Calculate amount - handle sendAll
     final int amount;
     if (output.sendAll) {
-      amount = balance[CryptoCurrency.xtm]?.available ?? 0;
+      amount = balance[CryptoCurrency.xtm]?.available.amount.toInt() ?? 0;
     } else {
-      final formattedAmount = output.formattedCryptoAmount;
-      if (formattedAmount == null || formattedAmount <= 0) {
+      final formattedAmount = output.cryptoAmount.amount.toInt();
+      if (formattedAmount <= 0) {
         throw Exception('Invalid amount specified.');
       }
       amount = formattedAmount;

@@ -1,36 +1,32 @@
+import 'package:cw_core/amount/money.dart';
 import 'package:cw_core/crypto_currency.dart';
 import 'package:cw_core/pending_transaction.dart';
 import 'package:cw_core/output_info.dart';
-import 'package:cw_minotari/minotari_amount_format.dart';
 
 class PendingMinotariTransaction with PendingTransaction {
-  final int amount;
-  final int fee;
+  @override
+  final Money amount;
+  @override
+  final Money fee;
   final String recipientAddress;
   final Future<String> Function() sendTransaction;
 
   String? _txId;
 
+  /// [amount] and [fee] are µT.
   PendingMinotariTransaction({
-    required this.amount,
-    required this.fee,
+    required int amount,
+    required int fee,
     required this.recipientAddress,
     required this.sendTransaction,
-  });
+  })  : amount = Money.fromInt(amount, CryptoCurrency.xtm),
+        fee = Money.fromInt(fee, CryptoCurrency.xtm);
 
   @override
   String get id => _txId ?? '';
 
   @override
-  String get amountFormatted =>
-      '${minotariAmountToString(amount: amount)} ${CryptoCurrency.xtm.title}';
-
-  @override
-  String get feeFormatted =>
-      '${minotariAmountToString(amount: fee)} ${CryptoCurrency.xtm.title}';
-
-  @override
-  String get feeFormattedValue => minotariAmountToString(amount: fee);
+  String get amountFormatted => amount.toString();
 
   @override
   String get hex => _txId ?? '';

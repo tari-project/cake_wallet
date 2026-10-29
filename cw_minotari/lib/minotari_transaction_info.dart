@@ -1,8 +1,7 @@
+import 'package:cw_core/amount/money.dart';
 import 'package:cw_core/crypto_currency.dart';
-import 'package:cw_core/format_amount.dart';
 import 'package:cw_core/transaction_direction.dart';
 import 'package:cw_core/transaction_info.dart';
-import 'package:cw_minotari/minotari_amount_format.dart';
 
 class MinotariTransactionInfo extends TransactionInfo {
   MinotariTransactionInfo({
@@ -20,29 +19,12 @@ class MinotariTransactionInfo extends TransactionInfo {
     this.id = id;
     // Use first payref as txHash for block explorer link generation
     this.txHash = payrefsList.isNotEmpty ? payrefsList.first : 'null';
-    this.amount = amount;
+    this.amount = Money.fromInt(amount, CryptoCurrency.xtm);
     this.date = date;
     this.direction = direction;
     this.isPending = isPending;
-    this.fee = fee;
+    this.fee = fee == null ? null : Money.fromInt(fee, CryptoCurrency.xtm);
     this.height = height;
     this.confirmations = confirmations;
-  }
-  String? _fiatAmount;
-
-  @override
-  String amountFormatted() =>
-      '${formatAmount(minotariAmountToString(amount: amount))} ${CryptoCurrency.xtm.title}';
-
-  @override
-  String fiatAmount() => _fiatAmount ?? '';
-
-  @override
-  void changeFiatAmount(String amount) => _fiatAmount = formatAmount(amount);
-
-  @override
-  String? feeFormatted() {
-    if (fee == null) return null;
-    return '${formatAmount(minotariAmountToString(amount: fee!))} ${CryptoCurrency.xtm.title}';
   }
 }
