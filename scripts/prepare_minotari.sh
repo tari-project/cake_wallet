@@ -44,7 +44,7 @@ CW_PARENT_DIR="$PROJECT_ROOT/cw_minotari"
 CW_RUST_DIR="$CW_PARENT_DIR/rust"
 CW_REPO_URL="https://github.com/tari-project/cw_tari_wallet.git"
 # Bump together with the bridge. Never build an unpinned HEAD.
-CW_REV="6d4c9757731e60ef298bd16c852ccceb9e084186"
+CW_REV="1019d47aa6b996e7623e780dda1f4fabd3c42a7a"
 
 #######################################
 # cw_tari_wallet setup
