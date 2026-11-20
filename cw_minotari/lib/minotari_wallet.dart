@@ -1,38 +1,261 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'dart:math';
+
 import 'package:cw_core/amount/money.dart';
 import 'package:cw_core/crypto_currency.dart';
 import 'package:cw_core/encryption_file_utils.dart';
+import 'package:cw_core/exceptions/cake_exception.dart';
 import 'package:cw_core/node.dart';
+import 'package:cw_core/output_info.dart';
 import 'package:cw_core/pathForWallet.dart';
 import 'package:cw_core/pending_transaction.dart';
 import 'package:cw_core/sync_status.dart';
+import 'package:cw_core/transaction_direction.dart';
 import 'package:cw_core/transaction_priority.dart';
 import 'package:cw_core/utils/print_verbose.dart';
+import 'package:cw_core/utils/proxy_wrapper.dart';
 import 'package:cw_core/wallet_base.dart';
 import 'package:cw_core/wallet_info.dart';
 import 'package:cw_core/wallet_keys_file.dart';
 import 'package:cw_minotari/minotari_balance.dart';
 import 'package:cw_minotari/minotari_balance_updater.dart';
+import 'package:cw_minotari/minotari_scan_listener.dart';
 import 'package:cw_minotari/minotari_ffi.dart';
-import 'package:cw_minotari/minotari_sync_loop.dart';
-import 'package:cw_minotari/minotari_runtime.dart';
-import 'package:cw_minotari/minotari_transaction_status.dart';
-import 'package:cw_minotari/minotari_transaction_date.dart';
+import 'package:cw_minotari/minotari_send_notes.dart';
 import 'package:cw_minotari/minotari_transaction_history.dart';
 import 'package:cw_minotari/minotari_transaction_info.dart';
+import 'package:cw_minotari/minotari_transaction_date.dart';
 import 'package:cw_minotari/minotari_transaction_priority.dart';
 import 'package:cw_minotari/minotari_wallet_addresses.dart';
 import 'package:cw_minotari/pending_minotari_transaction.dart';
 import 'package:cw_minotari/src/rust/api/base_node.dart' as base_node;
-import 'package:cw_minotari/src/rust/api/network.dart';
+import 'package:cw_minotari/src/rust/api/height.dart' show estimateHeightAtTime;
 import 'package:cw_minotari/src/rust/api/scanner.dart';
 import 'package:cw_minotari/src/rust/api/transactions.dart';
-import 'package:cw_core/transaction_direction.dart';
 import 'package:mobx/mobx.dart';
+import 'package:path/path.dart' as p;
 
 part 'minotari_wallet.g.dart';
+
+/// Blocks per day at Tari's 2-minute target block time.
+const _blocksPerDay = 720;
+
+/// A start height at or below the real height of the block whose offline [estimate] is given.
+///
+/// cw's offline estimate counts target-time blocks since genesis (so [estimate] / 720 is days
+/// since genesis). Real blocks run slower, so it runs high, and the lead grows: about 2,000
+/// blocks on 2026-01-01 and 12,240 on 2026-09-01, roughly 42 more a day.
+// shortcut: the margin extrapolates that growth: 2 days plus 84 blocks per day since genesis
+// (twice the growth rate), which stays at least twice the lead while blocks keep that pace.
+// Revisit if block times change or cw's estimate gets a newer anchor.
+int minotariSafeStartHeight(int estimate) =>
+    max(0, estimate - (2 * _blocksPerDay + estimate * 84 ~/ _blocksPerDay));
+
+/// A safe restore or rescan start for [date], without asking a node.
+Future<int> minotariHeightByDate(DateTime date) async {
+  await MinotariFfi.ensureRustLibInitialized();
+  final estimate = estimateHeightAtTime(
+    network: MinotariFfi.network,
+    epochSecs: BigInt.from(date.millisecondsSinceEpoch ~/ 1000),
+  ).toInt();
+  return minotariSafeStartHeight(estimate);
+}
+
+/// A random wallet-database passphrase; it lives only in the encrypted .keys file.
+String randomMinotariPassphrase() {
+  const allowedChars =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#\$%-=_+[]{}|;:,.<>?';
+  final random = Random.secure();
+  return List.generate(32, (_) => allowedChars[random.nextInt(allowedChars.length)]).join();
+}
+
+/// The base URL for a Minotari node call. cw's HTTP client can't use the app's built-in Tor,
+/// so with Tor running ([torOn]) nothing is sent rather than leak it over clearnet; and node
+/// traffic, which carries the wallet's own transactions, must be TLS and direct.
+String minotariNodeUrl(Node? node, {required bool torOn}) {
+  if (node == null) throw Exception('No node connected. Call connectToNode first.');
+  if (torOn) throw const TorUnsupportedException('Minotari cannot use Tor yet.');
+  if (!node.isSSL) throw Exception('Minotari nodes must use SSL (https).');
+  // cw's HTTP client has no proxy: a node's SOCKS proxy would be silently bypassed.
+  if (node.useSocksProxy) throw Exception('Minotari nodes cannot use a SOCKS proxy yet.');
+  return node.uri.toString();
+}
+
+/// Runs [action], then [restore] whether or not it failed. A failing [restore] is logged and
+/// never replaces [action]'s result or error.
+Future<T> minotariThenRestore<T>(
+  Future<T> Function() action,
+  Future<void> Function() restore,
+) async {
+  try {
+    return await action();
+  } finally {
+    try {
+      await restore();
+    } catch (e) {
+      printV('Minotari restore after an action failed: $e');
+    }
+  }
+}
+
+/// Runs [work] once everything already in [queue] has run. A failure is logged and goes no
+/// further, so it can't block later work or fail whoever awaits it (a send that has already
+/// broadcast must not report failure because a history refresh did).
+Future<void> runAfterMinotariQueue(Future<void> queue, FutureOr<void> Function() work) =>
+    queue.then((_) async {
+      try {
+        await work();
+      } catch (e) {
+        printV('Error updating Minotari transactions: $e');
+      }
+    });
+
+/// Writes [data] to the .keys file at [keysPath] and to its backup, each through a temp file
+/// and a rename, so a failure or crash leaves every file either as it was or complete.
+/// Errors propagate.
+Future<void> writeMinotariKeysFiles(
+  EncryptionFileUtils encryptionFileUtils, {
+  required String keysPath,
+  required String password,
+  required String data,
+}) async {
+  final paths = [keysPath, '$keysPath.backup'];
+  try {
+    for (final path in paths) {
+      await encryptionFileUtils.write(path: '$path.tmp', password: password, data: data);
+    }
+  } catch (_) {
+    for (final path in paths) {
+      final temp = File('$path.tmp');
+      if (temp.existsSync()) await temp.delete();
+    }
+    rethrow;
+  }
+  for (final path in paths) {
+    await File('$path.tmp').rename(path);
+  }
+}
+
+/// The cw fee priority for a Cake priority (Medium when none is chosen).
+FeePriority minotariFeePriority(TransactionPriority? priority) => switch (priority) {
+      MinotariTransactionPriority.slow => FeePriority.slow,
+      MinotariTransactionPriority.fast => FeePriority.fast,
+      _ => FeePriority.medium,
+    };
+
+/// What a send of [amount] at [priority] pays out and costs, and the rate it is built at.
+///
+/// A normal send is built at the rate of its [estimate]. A send-all asks the node for
+/// [priority]'s rate and quotes the sweep at it with [estimateSendAll].
+Future<({int amount, int fee, BigInt feePerGram})> quoteMinotariSend({
+  required TransactionPriority? priority,
+  required bool sendAll,
+  required int amount,
+  required Future<FeeEstimate> Function(FeePriority priority) estimate,
+  required Future<BigInt> Function(FeePriority priority) feePerGram,
+  required Future<SendAllFeeEstimate> Function(BigInt feePerGram) estimateSendAll,
+}) async {
+  final feePriority = minotariFeePriority(priority);
+  if (sendAll) {
+    final rate = await feePerGram(feePriority);
+    final quote = await estimateSendAll(rate);
+    return (amount: quote.amountAfterFee.toInt(), fee: quote.fee.toInt(), feePerGram: rate);
+  }
+  final quote = await estimate(feePriority);
+  return (amount: amount, fee: quote.estimatedFee.toInt(), feePerGram: quote.feePerGram);
+}
+
+/// One cw recipient per output. A send-all pays its single recipient everything, so it
+/// cannot be combined with other outputs.
+List<SendRecipient> minotariRecipients(List<OutputInfo> outputs) {
+  if (outputs.isEmpty) {
+    throw TransactionGenerationException('No outputs specified for transaction.');
+  }
+  if (outputs.length > 1 && outputs.any((output) => output.sendAll)) {
+    throw TransactionGenerationException('Send all cannot be combined with other recipients.');
+  }
+
+  return outputs.map((output) {
+    final address =
+        output.isParsedAddress ? output.extractedAddress ?? output.address : output.address;
+    if (address.isEmpty) {
+      throw TransactionGenerationException('Recipient address is empty.');
+    }
+
+    final amount = output.sendAll ? BigInt.zero : output.cryptoAmount.amount;
+    if (!output.sendAll && amount <= BigInt.zero) {
+      throw TransactionGenerationException('Invalid amount specified.');
+    }
+
+    // No payment id: Cake's note is private, and an address that carries one sends it itself.
+    return SendRecipient(address: address, amount: amount);
+  }).toList();
+}
+
+/// The result the send [events] stream's final Broadcasted event carries. Throws when the
+/// stream ends without a broadcast.
+Future<SendResultDto?> minotariBroadcastResult(Stream<SendTransactionEvent> events) async {
+  var broadcasted = false;
+  SendResultDto? result;
+  await for (final event in events) {
+    if (event.stage == TransactionStage.broadcasted) {
+      broadcasted = true;
+      result = event.result ?? result;
+    }
+  }
+  if (!broadcasted) throw Exception('Transaction stream ended before the broadcast.');
+  return result;
+}
+
+/// Whether cw refused a background scan because the app is scanning the wallet itself.
+/// Matches cw's error text, which is part of its frozen API.
+bool minotariForegroundScanActive(Object error) =>
+    error.toString().contains('A foreground scan of this wallet is already running');
+
+/// Blocks a caught-up scan may trail the tip by and still count as synced.
+const _syncedTipGap = 2;
+
+/// The sync status a scan event moves the wallet to, or null when it leaves it unchanged.
+///
+/// A scan is first synced when it has caught up (Waiting or Completed); after that
+/// ([caughtUp]) it stays synced while it trails the tip by at most [_syncedTipGap] blocks.
+/// A scan that was stopped or replaced leaves the wallet not connected rather than synced
+/// or failed. A [background] sync slot instead ends paused when it was stopped or ran out
+/// of time, and handled by the foreground when the app took the wallet over (or already
+/// had it), so the background loop moves on without retrying or calling it synced.
+SyncStatus? minotariSyncStatusFor(
+  ScanEventDto event, {
+  required int startHeight,
+  required bool caughtUp,
+  bool background = false,
+}) =>
+    switch (event) {
+      ScanEventDto_Started() => SyncronizingSyncStatus(),
+      ScanEventDto_Progress(:final currentHeight, :final tipHeight)
+          when caughtUp && tipHeight - currentHeight <= BigInt.from(_syncedTipGap) =>
+        SyncedSyncStatus(),
+      ScanEventDto_Progress(:final currentHeight, :final tipHeight) =>
+        SyncingSyncStatus.fromHeightValues(tipHeight.toInt(), startHeight, currentHeight.toInt()),
+      ScanEventDto_Waiting() || ScanEventDto_Completed() => SyncedSyncStatus(),
+      ScanEventDto_Cancelled() ||
+      ScanEventDto_BudgetExhausted() when background =>
+        PausedSyncStatus(),
+      ScanEventDto_Superseded() when background => HandledByForegroundSyncStatus(),
+      ScanEventDto_Error(:final field0) when background && minotariForegroundScanActive(field0) =>
+        HandledByForegroundSyncStatus(),
+      ScanEventDto_Cancelled() ||
+      ScanEventDto_Superseded() ||
+      ScanEventDto_BudgetExhausted() =>
+        NotConnectedSyncStatus(),
+      ScanEventDto_Error() => FailedSyncStatus(),
+      ScanEventDto_MoreBlocksAvailable() ||
+      ScanEventDto_TransactionsReady() ||
+      ScanEventDto_TransactionsUpdated() ||
+      ScanEventDto_ReorgDetected() =>
+        null,
+    };
 
 class MinotariWallet = MinotariWalletBase with _$MinotariWallet;
 
@@ -42,14 +265,13 @@ abstract class MinotariWalletBase
   MinotariWalletBase(
     WalletInfo walletInfo,
     DerivationInfo derivationInfo, {
-    String? mnemonic,
     required String password,
+    required String dbPassphrase,
     required this.encryptionFileUtils,
-    this.passphrase,
     this.viewPrivateKeyHex,
     this.spendPublicKeyHex,
-  })  : _mnemonic = mnemonic,
-        _password = password,
+  })  : _password = password,
+        _dbPassphrase = dbPassphrase,
         balance = ObservableMap.of({
           CryptoCurrency.xtm: MinotariBalance(
             available: 0,
@@ -57,7 +279,6 @@ abstract class MinotariWalletBase
             pendingOutgoing: 0,
           )
         }),
-        _isTransactionUpdating = false,
         walletAddresses = MinotariWalletAddresses(walletInfo),
         syncStatus = NotConnectedSyncStatus(),
         super(walletInfo, derivationInfo) {
@@ -65,48 +286,51 @@ abstract class MinotariWalletBase
   }
 
   MinotariFfi? _ffi;
-  bool _isTransactionUpdating;
-  bool _historyNeedsReload = true;
+  bool _isUnlocked = false;
+  bool _closed = false;
   bool _restoringHistory = false;
   int _historyGeneration = 0;
-  final _historyUpdates = MinotariHistoryUpdateQueue();
-  late final _balanceUpdates = MinotariBalanceUpdater(
-    readBalance: _readBalance,
-    currentBalance: () => balance[CryptoCurrency.xtm],
-    publishBalance: (next) => balance[CryptoCurrency.xtm] = next,
+  late final _balanceUpdates = MinotariBalanceUpdater<MinotariBalance>(
+    read: _readBalance,
+    publish: (next) => runInAction(() => balance[CryptoCurrency.xtm] = next),
   );
-  late final _syncLoop = MinotariSyncLoop<ScanEventDto>(
-    scan: _openScan,
-    onEvent: _handleScanEvent,
-    refresh: _refreshAfterScan,
-    onSynced: () => syncStatus = SyncedSyncStatus(),
-    onError: (error, stack) {
-      _historyNeedsReload = true;
-      printV('Minotari sync cycle failed: $error');
-      syncStatus = FailedSyncStatus();
-    },
-  );
+  Future<void> _transactionsReload = Future.value();
+  bool _reloadTransactionsWhenSynced = false;
   Node? _currentNode;
-  int _chainTipHeight = 0;
-  int _initialSyncHeight = 0;
 
-  /// Only a completed quote for the latest amount/priority/payment is cached.
-  FeeEstimate? _cachedFeeEstimate;
-  BigInt? _cachedFeeAmount;
-  FeePriority? _cachedFeePriority;
-  int _feeRequest = 0;
-  ({BigInt amount, FeePriority priority, String? paymentId, String url})? _activeFeeKey;
+  /// The scan this wallet started last; events of earlier scans are ignored.
+  ScanHandle? _scanHandle;
+  ScanPriority _scanPriority = ScanPriority.foreground;
+  int _scanStartHeight = 0;
+  bool _scanCaughtUp = false;
 
-  void _invalidateFee() {
-    _feeRequest++;
-    _cachedFeeEstimate = null;
-    _cachedFeeAmount = null;
-    _cachedFeePriority = null;
-    _activeFeeKey = null;
-  }
+  /// Set while this wallet's scan runs and the app wants it, so a foreground scan another
+  /// engine replaced (Android background sync) is started again. Cleared when the scan is
+  /// stopped or fails.
+  bool _keepScanning = false;
 
-  final String _password;
-  final String? _mnemonic;
+  bool get isScanning => _keepScanning;
+
+  late MinotariSendNotes _sendNotes;
+
+  /// This wallet's abandoned sends that were mined after all, from cw's warnings and scans.
+  final Set<String> _minedAfterAbandon = {};
+
+  /// Those of them the user has not been warned about yet.
+  final ObservableSet<String> abandonAlerts = ObservableSet();
+
+  /// The latest quote per priority: a send screen asking again for the same amount within
+  /// [_feeQuoteLifetime] costs no node call, and nothing is quoted unless one asks.
+  final Map<TransactionPriority, ({int amount, bool sendAll, int fee, DateTime quotedAt})>
+      _feeQuotes = {};
+  static const _feeQuoteLifetime = Duration(minutes: 1);
+
+  /// The latest quote request per priority; an older one finishing later is not cached.
+  final Map<TransactionPriority, int> _feeQuoteRequests = {};
+  final Map<(TransactionPriority, int, bool), Future<int>> _feeQuotesInFlight = {};
+
+  String _password;
+  String _dbPassphrase;
   final EncryptionFileUtils encryptionFileUtils;
 
   @override
@@ -120,24 +344,20 @@ abstract class MinotariWalletBase
   @observable
   ObservableMap<CryptoCurrency, MinotariBalance> balance;
 
+  /// The mnemonic is never held by the wallet; [loadSeed] reads it for the seed page.
   @override
-  String? get seed => _mnemonic;
+  String? get seed => null;
 
   /// password - for encrypting/decrypting the .keys file
   @override
   String get password => _password;
-
-  /// BIP39 passphrase used for seed derivation
-  @override
-  final String? passphrase;
 
   final String? viewPrivateKeyHex;
   final String? spendPublicKeyHex;
 
   @override
   WalletKeysData get walletKeysData => WalletKeysData(
-        mnemonic: _mnemonic,
-        passphrase: passphrase,
+        passphrase: _dbPassphrase,
         scanSecret: viewPrivateKeyHex,
         spendPubkey: spendPublicKeyHex,
       );
@@ -145,742 +365,557 @@ abstract class MinotariWalletBase
   @override
   Object get keys => {};
 
+  @override
+  bool get hasRescan => true;
+
+  @override
+  bool canSend() => !walletInfo.isWatchOnly;
+
+  @override
+  bool get canSignMessages => !walletInfo.isWatchOnly;
+
   String get address => walletAddresses.address;
 
-  Future<void> init() async {
-    try {
-      await MinotariRuntime.instance.attach(this, pause: _stopSync, resume: _resumeSync);
-      final dbPath = '${await pathForWalletTypeDir(type: walletInfo.type)}/wallet.db';
-      _ffi = MinotariFfi(dataPath: dbPath, walletName: walletInfo.name);
-
-      // Get the network from wallet info (defaults to mainnet if not set)
-      final network = TariNetwork.values.firstWhere(
-        (n) => n.name == walletInfo.network,
-        orElse: () => TariNetwork.mainNet,
-      );
-
-      // Open the existing wallet database with the correct network
-      await _ffi?.open(network);
-      _restoringHistory = walletInfo.isRecovery;
-
-      // Get the wallet address from the Rust layer (it's persisted there)
-      final address = await _ffi?.getAddress(passphrase: passphrase ?? '');
-      if (address != null && address.isNotEmpty) {
-        walletAddresses.setAddress(address);
-      } else {
-        printV('Warning: Could not retrieve wallet address from FFI');
-      }
-
-      await updateBalance();
-      await updateTransactions();
-    } catch (e) {
-      MinotariRuntime.instance.detach(this);
-      printV('Error initializing Minotari wallet: $e');
-      rethrow;
-    }
+  MinotariFfi get _requireFfi {
+    final ffi = _ffi;
+    if (ffi == null) throw Exception('Wallet not initialized.');
+    return ffi;
   }
 
-  Future<void> _resumeSync() async {
-    if (_ffi == null) return;
-    await _ffi!.resume();
-    _historyNeedsReload = true;
-    await updateTransactions();
+  /// Every node call goes through here. Tor counts once the user turns it on, not only once
+  /// it runs: while it starts, or after it failed to, nothing may go out over clearnet.
+  String get _nodeUrl => minotariNodeUrl(_currentNode, torOn: CakeTor.requestedOrStarted);
+
+  Future<void> init() async {
+    // Every Minotari wallet is mainnet; refuse anything else rather than open it as mainnet.
+    if (walletInfo.network != MinotariFfi.network.name) {
+      throw WalletOpenException('Minotari supports mainnet only, not ${walletInfo.network}.');
+    }
+
+    final walletPath = await pathForWallet(name: walletInfo.name, type: walletInfo.type);
+    _sendNotes = await MinotariSendNotes.load('$walletPath$minotariSendNotesSuffix');
+    final dbPath = p.join(await pathForWalletTypeDir(type: walletInfo.type), 'wallet.db');
+    final ffi = MinotariFfi(dataPath: dbPath, walletName: walletInfo.name);
+    await ffi.unlock(passphrase: _dbPassphrase);
+    try {
+      await walletAddresses.setAddress(await ffi.getAddress());
+    } catch (_) {
+      await ffi.lock();
+      rethrow;
+    }
+    _ffi = ffi;
+    _isUnlocked = true;
+    _restoringHistory = walletInfo.isRecovery;
+
+    try {
+      _addMinedAfterAbandon(minotariMinedAfterAbandon(await ffi.abandonWarnings()));
+    } catch (e) {
+      printV('Minotari abandon warnings not read: $e');
+    }
     await updateBalance();
-    if (_currentNode != null) await startSync();
+    await updateTransactions();
   }
 
   @override
   Future<void> connectToNode({required Node node}) async {
-    _invalidateFee();
-    try {
-      await _stopSync();
-      syncStatus = ConnectingSyncStatus();
+    // The old node's scan would otherwise keep reporting synced over a failed connection;
+    // forgetting its handle keeps its late Cancelled from overwriting the status set here.
+    await stopSync();
+    _scanHandle = null;
+    syncStatus = ConnectingSyncStatus();
+    _currentNode = node;
 
-      // Store the node for later use
-      _currentNode = node;
-
-      // Test connection by fetching balance
-      await updateBalance();
-
-      syncStatus = ConnectedSyncStatus();
-    } catch (e) {
-      syncStatus = FailedSyncStatus();
-      rethrow;
+    // With Tor on, say why rather than just failing.
+    if (CakeTor.requestedOrStarted) {
+      syncStatus =
+          FailedSyncStatus(cause: const TorUnsupportedException('Minotari cannot use Tor yet.'));
+      return;
     }
-  }
 
-  @override
-  Future<void> startSync() async {
-    if (_currentNode == null || _ffi == null) {
+    // Never throws: an unreachable node or a transport error is just unhealthy.
+    if (!await checkNodeHealth()) {
       syncStatus = FailedSyncStatus();
       return;
     }
-    _balanceUpdates.invalidate();
-    // Restarting cancels any prior stream, whose final IDs may not be delivered.
-    _historyNeedsReload = true;
-    await _syncLoop.start();
+
+    syncStatus = ConnectedSyncStatus();
   }
 
   @override
-  Future<void> startBackgroundSync() async {
-    if (_currentNode == null || _ffi == null) {
-      syncStatus = FailedSyncStatus();
-      throw StateError('Minotari background sync needs an open wallet and node');
-    }
-    _balanceUpdates.invalidate();
-    _historyNeedsReload = true;
-    final cancelled = Completer<void>();
-    final cancellation = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (MinotariRuntime.instance.backgroundCancelled && !cancelled.isCompleted) {
-        cancelled.completeError(StateError('Minotari foreground requested'));
-      }
-    });
-    try {
-      await Future.any([_syncLoop.runOnce(), cancelled.future]).timeout(const Duration(minutes: 3));
-      if (syncStatus is! SyncedSyncStatus || !_scanCompleted) {
-        throw StateError('Minotari background scan did not complete');
-      }
-    } catch (_) {
-      syncStatus = FailedSyncStatus();
-      rethrow;
-    } finally {
-      cancellation.cancel();
-      await _stopSync();
-    }
-  }
+  Future<void> startSync() => _scan();
+
+  /// One budgeted pass at background priority. It never replaces the app's own scan (cw
+  /// refuses it) and the app's scan replaces it; both end as [HandledByForegroundSyncStatus].
+  /// The DB session was opened when the wallet loaded; [close] stops this scan and locks it.
+  @override
+  Future<void> startBackgroundSync() => _scan(priority: ScanPriority.background);
 
   @override
-  Future<void> stopSync() => _stopSync();
+  Future<void> rescan({required int height}) {
+    // The rescan rolls the history back; reload all of it once the scan has caught up.
+    _reloadTransactionsWhenSynced = true;
+    return _scan(fromHeight: height);
+  }
 
-  bool _scanCompleted = false;
-  Completer<void>? _openingCancelled;
-
-  Future<Stream<ScanEventDto>> _openScan(bool Function() isCurrent) async {
-    _scanCompleted = false;
-    final cancelled = Completer<void>();
-    _openingCancelled = cancelled;
+  /// Starts a continuous scan, replacing this wallet's previous one. Errors (including
+  /// transport errors) end as [FailedSyncStatus]; the connection check reconnects and
+  /// starts the scan again.
+  Future<void> _scan({
+    int? fromHeight,
+    ScanPriority priority = ScanPriority.foreground,
+  }) async {
     try {
-      await MinotariRuntime.instance.ensureSession();
-      if (!isCurrent()) return const Stream<ScanEventDto>.empty();
-      await _ffi!.resume();
-      if (!isCurrent()) return const Stream<ScanEventDto>.empty();
       syncStatus = AttemptingSyncStatus();
-      final nodeUrl = _currentNode!.uri.toString();
-      try {
-        // Tip RPC is stateless: cancelling its wait must not delay native handover.
-        // Future.any observes late failures too; isCurrent rejects late responses.
-        final tipInfo = await Future.any([
-          base_node.getTipInfo(baseUrl: nodeUrl),
-          cancelled.future.then<base_node.TipInfo?>((_) => null),
-        ]);
-        if (!isCurrent()) return const Stream<ScanEventDto>.empty();
-        if (tipInfo != null) _chainTipHeight = tipInfo.bestBlockHeight.toInt();
-      } catch (e) {
-        if (!isCurrent()) return const Stream<ScanEventDto>.empty();
-        printV('Error fetching chain tip: $e');
-      }
-      if (!isCurrent()) return const Stream<ScanEventDto>.empty();
+      final ffi = _requireFfi;
+      final handle = ffi.createScanHandle();
+      _scanHandle = handle;
+      _scanPriority = priority;
+      _scanCaughtUp = false;
+      _balanceUpdates.invalidate();
       _balanceUpdates.beginScan();
-      final stream = _ffi!.startScan(
-        baseNodeAddress: nodeUrl,
-        passphrase: passphrase ?? '',
-        continuous: false,
+      _keepScanning = true;
+      listenMinotariScan<ScanEventDto>(
+        stream: () => ffi.scan(
+            handle: handle, baseNodeUrl: _nodeUrl, priority: priority, fromHeight: fromHeight),
+        onData: (event) {
+          if (_scanHandle == handle) _onScanEvent(event);
+        },
+        onError: (Object error, StackTrace stack) {
+          if (_closed || _scanHandle != handle) return;
+          unawaited(updateBalance());
+          printV('Minotari scan failed: $error');
+          _keepScanning = false;
+          syncStatus = priority == ScanPriority.background && minotariForegroundScanActive(error)
+              ? HandledByForegroundSyncStatus()
+              : FailedSyncStatus();
+        },
       );
-      syncStatus = SyncronizingSyncStatus();
-      return stream;
-    } finally {
-      if (identical(_openingCancelled, cancelled)) _openingCancelled = null;
+    } catch (e) {
+      printV('Minotari scan could not start: $e');
+      _keepScanning = false;
+      syncStatus = FailedSyncStatus(cause: e);
     }
   }
 
-  Future<void> _refreshAfterScan(bool Function() isCurrent) async {
-    // PR #149 runs the upstream monitor before the scan completes. Consume its
-    // changes; do not recalculate confirmations independently in Cake Wallet.
-    try {
-      if (_restoringHistory && _scanCompleted) {
-        await _runHistoryUpdate(isCurrent, () async {
-          // The post-scan monitor has supplied final statuses. Replace preview
-          // rows as one snapshot, including those with no native status change.
-          _restoringHistory = false;
-          try {
-            await _loadTransactions(isCurrent: isCurrent);
-            if (!isCurrent()) {
-              _restoringHistory = true;
-              return;
-            }
-            walletInfo.isRecovery = false;
-            await walletInfo.save();
-          } catch (_) {
-            _restoringHistory = true;
-            walletInfo.isRecovery = true;
-            rethrow;
-          }
-        });
-      } else {
-        await _updateHistoryChanges(isCurrent);
-      }
-    } finally {
-      // A history read failure must not leave an independently readable balance stale.
-      if (isCurrent()) {
-        await updateBalance(isCurrent: isCurrent);
-      }
-    }
-  }
-
-  Future<void> _runHistoryUpdate(
-    bool Function() isCurrent,
-    Future<void> Function() update,
-  ) =>
-      _historyUpdates.run(() async {
-        if (!isCurrent()) return;
-        try {
-          await update();
-          // Native deltas may already be acknowledged when a sync generation
-          // changes. Recover with a snapshot rather than lose those updates.
-          if (!isCurrent()) _historyNeedsReload = true;
-        } catch (_) {
-          // If transport/mapping fails after a native acknowledgement, reconcile
-          // once on recovery. Never replace a successful snapshot with partial data.
-          _historyNeedsReload = true;
-          rethrow;
+  void _onScanEvent(ScanEventDto event) {
+    if (_closed) return;
+    switch (event) {
+      case ScanEventDto_Progress():
+        unawaited(_refreshBalance(force: false));
+      case ScanEventDto_Cancelled() || ScanEventDto_BudgetExhausted():
+        unawaited(updateBalance());
+      case ScanEventDto_Started(:final fromHeight):
+        _scanStartHeight = fromHeight.toInt();
+      case ScanEventDto_Waiting() || ScanEventDto_Completed():
+        _scanCaughtUp = true;
+        unawaited(updateBalance());
+        if (_restoringHistory) {
+          unawaited(_finishRestoreHistory());
+        } else if (_reloadTransactionsWhenSynced) {
+          _reloadTransactionsWhenSynced = false;
+          unawaited(updateTransactions());
         }
-      });
-
-  Future<void> _updateHistoryChanges(bool Function() isCurrent, {List<String>? transactionIds}) =>
-      _runHistoryUpdate(
-          isCurrent, () => _loadHistoryChanges(isCurrent, transactionIds: transactionIds));
-
-  Future<void> _loadHistoryChanges(bool Function() isCurrent,
-      {List<String>? transactionIds}) async {
-    if (_historyNeedsReload) {
-      await _loadTransactions(isCurrent: isCurrent);
-      return;
+      case ScanEventDto_TransactionsReady(:final field0):
+        _addMinedAfterAbandon(field0.abandonedThenMinedIds ?? const []);
+        _processNewTransactions(field0.transactions);
+        unawaited(updateBalance());
+      case ScanEventDto_TransactionsUpdated(:final field0):
+        _addMinedAfterAbandon(field0.abandonedThenMinedIds ?? const []);
+        _processNewTransactions(field0.updatedTransactions);
+        unawaited(updateBalance());
+      case ScanEventDto_ReorgDetected():
+        unawaited(updateTransactions());
+        unawaited(updateBalance());
+      case ScanEventDto_Superseded() when _keepScanning && _scanPriority == ScanPriority.foreground:
+        // Another engine's scan (Android background sync) replaced the app's; take it back.
+        unawaited(_scan());
+        return;
+      case ScanEventDto_Error(:final field0):
+        unawaited(updateBalance());
+        printV('Minotari scan error: $field0');
+        _keepScanning = false;
+      default:
+        break;
     }
-    final changed = await _ffi!.getChangedTransactions(transactionIds: transactionIds);
-    if (!isCurrent()) return;
-    printV('Minotari history changes: ${changed.length} transactions');
-    await transactionHistory.applyChanges(changed, _dtoToTransactionInfo, isCurrent: isCurrent);
-  }
 
-  Future<void> _stopSync() async {
-    // A cancelled native forwarder may not have delivered its last committed
-    // events. Reconcile once when this wallet reconnects, never on idle cycles.
-    _historyNeedsReload = true;
-    // Invalidate Dart results immediately, then cancel the native scan too.
-    _balanceUpdates.invalidate();
-    final opening = _openingCancelled;
-    if (opening != null && !opening.isCompleted) opening.complete();
-    final stopped = _syncLoop.stop();
-    await _ffi?.stopScan();
-    await stopped;
-    await _balanceUpdates.idle;
-    await _historyUpdates.idle;
-  }
-
-  /// Handle scan events from the scanner stream
-  Future<void> _handleScanEvent(ScanEventDto event, bool Function() isCurrent) async {
-    if (!isCurrent()) return;
-    List<DisplayedTransactionDto>? changedTransactions;
-    int? committedHeight;
-    event.when(
-      status: (status) {
-        status.when(
-          started: (accountId, fromHeight) {
-            printV('Scan started from height: $fromHeight');
-            _initialSyncHeight = fromHeight.toInt();
-            syncStatus = SyncronizingSyncStatus();
-          },
-          progress: (accountId, currentHeight, blocksScanned) {
-            printV('Scan progress: height $currentHeight, scanned $blocksScanned blocks');
-            final currentHeightInt = currentHeight.toInt();
-            committedHeight = currentHeightInt;
-
-            if (_chainTipHeight > 0 && _chainTipHeight >= currentHeightInt) {
-              syncStatus = SyncingSyncStatus.fromHeightValues(
-                _chainTipHeight,
-                _initialSyncHeight,
-                currentHeightInt,
-              );
-            } else {
-              syncStatus = SyncronizingSyncStatus();
-            }
-          },
-          completed: (accountId, finalHeight, totalBlocksScanned) {
-            _scanCompleted = true;
-            printV('Scan completed at height $finalHeight, total blocks: $totalBlocksScanned');
-          },
-          paused: (accountId, lastScannedHeight, reason) {
-            printV('Scan paused at height $lastScannedHeight: $reason');
-          },
-          waiting: (accountId, resumeInSeconds) {
-            printV('Scanner waiting, resume in $resumeInSeconds seconds');
-          },
-          moreBlocksAvailable: (accountId, lastScannedHeight) {
-            printV('More blocks available after height $lastScannedHeight');
-          },
-        );
-      },
-      transactionsReady: (dto) {
-        printV('Transactions ready: ${dto.transactions.length} transactions');
-        changedTransactions = dto.transactions;
-      },
-      transactionsUpdated: (dto) {
-        printV('Transactions updated: ${dto.updatedTransactions.length} transactions');
-        changedTransactions = dto.updatedTransactions;
-      },
-      error: (errorMessage) => throw StateError(errorMessage),
+    final status = minotariSyncStatusFor(
+      event,
+      startHeight: _scanStartHeight,
+      caughtUp: _scanCaughtUp,
+      background: _scanPriority == ScanPriority.background,
     );
-    if (committedHeight != null) {
-      // Upstream emits Progress after committing the batch. TransactionsReady
-      // may arrive earlier and is not a safe boundary for a balance read.
-      try {
-        final refreshed = await _balanceUpdates.refresh(force: false, isCurrent: isCurrent);
-        if (refreshed) {
-          printV('Minotari balance refreshed during scan at height $committedHeight');
-        }
-      } catch (error) {
-        // Keep the last valid balance and continue the scan; the next permitted
-        // progress or the unconditional final refresh will retry this local read.
-        printV('Minotari intermediate balance refresh will retry: $error');
-      }
+    // Re-reporting synced would make every listener (the send screen's fee) run again.
+    if (status != null && !(status is SyncedSyncStatus && syncStatus is SyncedSyncStatus)) {
+      syncStatus = status;
     }
-    if (changedTransactions != null && changedTransactions!.isNotEmpty) {
-      // Event payloads can contain upstream's raw outgoing amount/fee. Fetch only
-      // dirty IDs through the same canonical mapper as the opening snapshot.
-      await _updateHistoryChanges(isCurrent,
-          transactionIds: changedTransactions!.map((tx) => tx.id).toList());
-    }
+  }
+
+  @override
+  Future<void> stopSync() async {
+    _keepScanning = false;
+    _balanceUpdates.invalidate();
+    final handle = _scanHandle;
+    if (handle != null) await _ffi?.stopScan(handle);
   }
 
   @override
   Future<PendingTransaction> createTransaction(Object credentials) async {
+    if (!canSend()) {
+      throw TransactionGenerationException('This wallet is view only and cannot send.');
+    }
     final creds = credentials as MinotariTransactionCredentials;
+    final ffi = _requireFfi;
+    final nodeUrl = _nodeUrl;
+    final recipients = minotariRecipients(creds.outputs);
+    final sendAll = creds.outputs.first.sendAll;
 
-    // Validate we have seed words
-    final mnemonic = _mnemonic;
-    if (mnemonic == null || mnemonic.isEmpty) {
-      throw Exception('Wallet seed not available. Cannot create transaction.');
-    }
-
-    // Validate we have a connected node
-    final currentNode = _currentNode;
-    if (currentNode == null) {
-      throw Exception('No node connected. Call connectToNode first.');
-    }
-
-    // Validate FFI is initialized
-    final ffi = _ffi;
-    if (ffi == null) {
-      throw Exception('Wallet not initialized.');
-    }
-
-    // Get the first output (Minotari doesn't support multiple outputs yet)
-    if (creds.outputs.length != 1) {
-      throw Exception('Minotari requires exactly one recipient.');
-    }
-
-    final output = creds.outputs.first;
-    final recipientAddress =
-        output.isParsedAddress ? output.extractedAddress ?? output.address : output.address;
-
-    final Money amount;
-    if (output.sendAll) {
-      throw UnsupportedError(
-          'Send All is not supported by the current Minotari library: a change output is required.');
-    } else {
-      if (output.cryptoAmount.currency != CryptoCurrency.xtm) {
-        throw ArgumentError('Minotari transactions require an XTM amount.');
-      }
-      amount = output.cryptoAmount;
-    }
-
-    if (amount.sign <= 0) {
-      throw Exception('Invalid amount: $amount');
-    }
-
-    if (recipientAddress.isEmpty) {
-      throw Exception('Recipient address is empty.');
-    }
-
-    // Prepare seed words as list
-    final seedWords = mnemonic.split(' ').where((w) => w.isNotEmpty).toList();
-    if (seedWords.length != 24) {
-      throw Exception('Invalid seed: expected 24 words, got ${seedWords.length}');
-    }
-
-    final nodeUrl = currentNode.uri.toString();
-
-    // Get note/payment ID if provided
-    final note = output.note;
-    final paymentId = (note != null && note.isNotEmpty) ? note : null;
-
-    // Confirmation always uses a fresh quote for this immutable payment. A
-    // failed estimate must prevent confirmation rather than substitute zero.
-    final quote = await estimatePaymentFee(
-      amount: amount.amount,
+    final total = recipients.fold(0, (sum, recipient) => sum + recipient.amount.toInt());
+    final (:amount, :fee, :feePerGram) = await quoteMinotariSend(
       priority: creds.priority,
-      paymentId: paymentId,
-    );
-    final fee = Money(quote.estimatedFee, CryptoCurrency.xtm);
-    final quotedGeneration = _historyGeneration;
-
-    // Create the send transaction callback
-    Future<String> sendTransactionCallback() async {
-      if (_historyGeneration != quotedGeneration || _currentNode?.uri.toString() != nodeUrl) {
-        throw StateError('Wallet or node changed. Review the payment again.');
-      }
-      final historyGeneration = _historyGeneration;
-      bool isCurrent() => historyGeneration == _historyGeneration;
-      final completer = Completer<String>();
-
-      final stream = ffi.sendTransaction(
-        seedWords: seedWords,
-        passphrase: passphrase ?? '',
-        recipientAddress: recipientAddress,
-        amount: amount.amount,
+      sendAll: sendAll,
+      amount: total,
+      estimate: (priority) => ffi.estimateSendFee(
+        recipients: recipients,
+        priority: priority,
         baseNodeUrl: nodeUrl,
-        paymentId: paymentId,
-        feePerGram: quote.feePerGram,
-        maxFee: quote.estimatedFee,
-      );
+        conflictsWithTransactionId: creds.conflictsWithTransactionId,
+      ),
+      feePerGram: (priority) => ffi.feePerGram(priority: priority, baseNodeUrl: nodeUrl),
+      estimateSendAll: (feePerGram) => ffi.estimateSendAllFee(
+        recipientAddress: recipients.single.address,
+        paymentId: recipients.single.paymentId,
+        feePerGram: feePerGram,
+      ),
+    );
 
-      stream.listen(
-        (event) {
-          printV('Send transaction stage: ${event.stage.name} - ${event.details}');
+    Future<String?> send() async {
+      final result = await minotariBroadcastResult(ffi.sendTransaction(
+        recipients: recipients,
+        sendAll: sendAll,
+        // Checked again at broadcast: Tor may have been turned on since the quote.
+        baseNodeUrl: _nodeUrl,
+        feePerGram: feePerGram,
+        maxFee: BigInt.from(fee),
+        conflictsWithTransactionId: creds.conflictsWithTransactionId,
+      ));
 
-          if (event.stage == TransactionStage.completed) {
-            // The details field contains the transaction ID on completion
-            if (!completer.isCompleted) {
-              completer.complete(event.details);
-            }
-          }
-        },
-        onError: (Object error) {
-          printV('Send transaction error: $error');
-          if (!completer.isCompleted) {
-            completer.completeError(error);
-          }
-        },
-        onDone: () {
-          // If stream completes without reaching 'completed' stage, something went wrong
-          if (!completer.isCompleted) {
-            completer.completeError(Exception('Transaction stream ended unexpectedly'));
-          }
-        },
-        cancelOnError: true,
-      );
-
-      // Wait for transaction to complete
-      final txId = await completer.future;
-
-      // The send is already recorded. A refresh failure must never invite a
-      // second payment; the next scan recovers history with a full snapshot.
-      try {
-        if (isCurrent()) await updateBalance(isCurrent: isCurrent);
-        if (isCurrent()) await _updateHistoryChanges(isCurrent);
-      } catch (error) {
-        _historyNeedsReload = true;
-        printV('Send recorded; local refresh will retry: $error');
+      // Still a success: cw has recorded the send and rebroadcasts it while the scan runs, so
+      // it must not be sent again. The history says the node has not accepted it yet.
+      if (result != null && !result.acceptedByNode) {
+        await _sendNotes
+            .update((notes) => notes.notAccepted[result.transaction.id] = result.nodeReason ?? '');
       }
 
-      return txId;
+      // Recorded as pending; the scanner's TransactionsUpdated confirms it. Neither refresh
+      // throws, so a failed refresh can't report a broadcast send as failed.
+      await updateBalance();
+      await updateTransactions();
+      return result?.transaction.id;
     }
 
     return PendingMinotariTransaction(
-      amount: amount,
-      fee: fee,
-      recipientAddress: recipientAddress,
-      sendTransaction: () => MinotariRuntime.instance.run(sendTransactionCallback),
+      amount: Money.fromInt(amount, CryptoCurrency.xtm),
+      fee: Money.fromInt(fee, CryptoCurrency.xtm),
+      send: send,
+      isFeeEstimate: !sendAll,
     );
   }
 
+  // Wallet state lives in the cw database; the .keys files are written by [writeKeysFiles].
   @override
-  Future<void> save() async {
-    // Wallet state is saved automatically by the Rust layer
-    // Save the keys file (mnemonic and passphrase)
-    if (!(await WalletKeysFile.hasKeysFile(walletInfo.name, walletInfo.type))) {
-      await saveKeysFile(password, encryptionFileUtils);
-      await saveKeysFile(password, encryptionFileUtils, true); // backup
-    }
-  }
+  Future<void> save() async {}
 
-  @override
-  Future<void> renameWalletFiles(String newWalletName) async {
-    final currentWalletPath = await pathForWallet(name: walletInfo.name, type: walletInfo.type);
-    final currentDirPath = await pathForWalletDir(name: walletInfo.name, type: walletInfo.type);
+  /// Writes the .keys files under [password]; errors propagate.
+  ///
+  /// [spendPrivateKeyHex] is kept only for wallets imported from a spend private key: cw has
+  /// no way to export it, so the .keys file is the user's only backup of it.
+  Future<void> writeKeysFiles(String password, {String? spendPrivateKeyHex}) async =>
+      writeMinotariKeysFiles(
+        encryptionFileUtils,
+        keysPath: await makeKeysFilePath(),
+        password: password,
+        data: WalletKeysData(
+          privateKey: spendPrivateKeyHex,
+          passphrase: _dbPassphrase,
+          scanSecret: viewPrivateKeyHex,
+          spendPubkey: spendPublicKeyHex,
+        ).toJSON(),
+      );
 
-    final newWalletPath = await pathForWallet(name: newWalletName, type: walletInfo.type);
+  /// The spend private key of a wallet imported from it, read from the .keys file for the
+  /// keys page; the wallet never keeps it.
+  Future<String?> loadSpendPrivateKey() async => (await WalletKeysFile.readKeysFile(
+        walletInfo.name,
+        walletInfo.type,
+        _password,
+        encryptionFileUtils,
+      ))
+          .privateKey;
 
-    printV(
-        'renameWalletFiles from \"${walletInfo.name}\" (in ${currentWalletPath} ) to \"$newWalletName\"');
-    final typeDir = await pathForWalletTypeDir(type: walletInfo.type);
-    final ffi = MinotariFfi(dataPath: '$typeDir/wallet.db', walletName: walletInfo.name);
-    await ffi.rename(newWalletName: newWalletName);
-
-    final currentKeysFile = File('$currentWalletPath.keys');
-    if (currentKeysFile.existsSync()) {
-      await currentKeysFile.copy('$newWalletPath.keys');
-    }
-
-    final currentKeysBackupFile = File('$currentWalletPath.keys.backup');
-    if (currentKeysBackupFile.existsSync()) {
-      await currentKeysBackupFile.copy('$newWalletPath.keys.backup');
-    }
-
-    await Directory(currentDirPath).delete(recursive: true);
-  }
-
+  /// Re-encrypts the .keys files under [password]. The database passphrase is random and
+  /// stored only in those files, so it is not rotated: rotating would leave a window where the
+  /// database and the files disagree and the wallet can't be unlocked.
   @override
   Future<void> changePassword(String password) async {
-    // Minotari wallets don't use passwords in the traditional sense
-    // The mnemonic is the key
-  }
-
-  @override
-  Future<void> rescan({required int height}) async {
-    await startSync();
+    await writeKeysFiles(password, spendPrivateKeyHex: await loadSpendPrivateKey());
+    _password = password;
   }
 
   @override
   Future<void> close({bool shouldCleanup = false}) async {
-    _invalidateFee();
+    _closed = true;
     _historyGeneration++;
-    try {
-      await _stopSync();
-      await _ffi?.dispose();
-    } finally {
-      MinotariRuntime.instance.detach(this);
+    await stopSync();
+    await _balanceUpdates.idle;
+    if (_isUnlocked) {
+      _isUnlocked = false;
+      await _ffi?.lock();
     }
   }
 
+  /// The latest quote for one output of [amount], or 0; [estimatedFeeFor] fetches it.
   @override
   int calculateEstimatedFee(TransactionPriority priority, int? amount) {
-    if (amount == null ||
-        BigInt.from(amount) != _cachedFeeAmount ||
-        _mapPriorityToFeePriority(priority) != _cachedFeePriority) return 0;
-    return _cachedFeeEstimate?.estimatedFee.toInt() ?? 0;
+    final quote = _feeQuotes[priority];
+    return quote != null && !quote.sendAll && quote.amount == (amount ?? 0) ? quote.fee : 0;
   }
 
+  /// Asks the node for the fee of one output of [amount], or quotes a send-all.
   @override
-  Future<void> updateEstimatedFeesParams(TransactionPriority? priority) async {
-    // The generic hook has no amount. XTM uses estimatePaymentFee explicitly;
-    // querying for zero here would select inputs for a different transaction.
-  }
-
-  Future<FeeEstimate> estimatePaymentFee({
-    required BigInt amount,
-    TransactionPriority? priority,
-    String? paymentId,
-  }) async {
-    _invalidateFee();
-    if (amount <= BigInt.zero || amount > (BigInt.one << 64) - BigInt.one) {
-      throw ArgumentError('Minotari amount must be a positive uint64 in microTari.');
-    }
+  Future<int> estimatedFeeFor(TransactionPriority priority, int? amount,
+      {bool sendAll = false}) async {
     final ffi = _ffi;
-    final node = _currentNode;
-    if (ffi == null || node == null) {
-      throw StateError('Wallet and node must be initialized to estimate a payment.');
+    final quote = _feeQuotes[priority];
+    final requested = sendAll ? 0 : amount ?? 0;
+    if (ffi == null || _currentNode == null) return 0;
+    if (quote != null &&
+        quote.sendAll == sendAll &&
+        quote.amount == requested &&
+        DateTime.now().difference(quote.quotedAt) < _feeQuoteLifetime) {
+      return quote.fee;
     }
-    final request = _feeRequest;
-    final generation = _historyGeneration;
-    final feePriority = _mapPriorityToFeePriority(priority);
-    final key = (
-      amount: amount,
-      priority: feePriority,
-      paymentId: paymentId?.isEmpty == true ? null : paymentId,
-      url: node.uri.toString(),
-    );
-    _activeFeeKey = key;
-    final quote = await ffi.estimateFee(
-      amount: amount,
-      priority: feePriority,
-      baseNodeUrl: key.url,
-      paymentId: key.paymentId,
-    );
-    if (generation != _historyGeneration ||
-        node != _currentNode ||
-        node.uri.toString() != key.url ||
-        (request != _feeRequest && _activeFeeKey != key)) {
-      throw StateError('The payment changed while estimating its fee.');
-    }
-    if (quote.estimatedFee <= BigInt.zero ||
-        quote.feePerGram <= BigInt.zero ||
-        quote.totalAmountRequired != amount + quote.estimatedFee) {
-      throw StateError('Invalid Minotari fee estimate.');
-    }
-    // An identical preview may overlap confirmation. Return its independent
-    // quote without letting an older completion replace the latest cache.
-    if (request == _feeRequest) {
-      _cachedFeeAmount = amount;
-      _cachedFeePriority = feePriority;
-      _cachedFeeEstimate = quote;
-    }
-    return quote;
+
+    // Identical requests at once (one per send-screen output) share a single node call.
+    final key = (priority, requested, sendAll);
+    return _feeQuotesInFlight[key] ??=
+        _fetchFeeQuote(ffi, priority, requested, sendAll).catchError((Object e) {
+      printV('Minotari fee estimate failed: $e');
+      return calculateEstimatedFee(priority, amount);
+    }).whenComplete(() => _feeQuotesInFlight.remove(key));
   }
 
-  /// Map Dart TransactionPriority to Rust FeePriority enum
-  FeePriority _mapPriorityToFeePriority(TransactionPriority? priority) {
-    if (priority is MinotariTransactionPriority) {
-      switch (priority) {
-        case MinotariTransactionPriority.slow:
-          return FeePriority.slow;
-        case MinotariTransactionPriority.medium:
-          return FeePriority.medium;
-        case MinotariTransactionPriority.fast:
-          return FeePriority.fast;
-      }
+  Future<int> _fetchFeeQuote(
+      MinotariFfi ffi, TransactionPriority priority, int amount, bool sendAll) async {
+    final request = (_feeQuoteRequests[priority] ?? 0) + 1;
+    _feeQuoteRequests[priority] = request;
+    final int fee;
+    if (sendAll) {
+      final feePerGram =
+          await ffi.feePerGram(priority: minotariFeePriority(priority), baseNodeUrl: _nodeUrl);
+      fee = (await ffi.estimateSendAllFee(recipientAddress: address, feePerGram: feePerGram))
+          .fee
+          .toInt();
+    } else {
+      fee = (await ffi.estimateFee(
+        amount: BigInt.from(amount),
+        numOutputs: 1,
+        priority: minotariFeePriority(priority),
+        baseNodeUrl: _nodeUrl,
+      ))
+          .estimatedFee
+          .toInt();
     }
-    // Default to medium priority
-    return FeePriority.medium;
+    if (_feeQuoteRequests[priority] == request) {
+      _feeQuotes[priority] = (amount: amount, sendAll: sendAll, fee: fee, quotedAt: DateTime.now());
+    }
+    return fee;
   }
-
-  /// Get the cached fee estimate (for display purposes)
-  FeeEstimate? get cachedFeeEstimate => _cachedFeeEstimate;
 
   @override
   Future<bool> checkNodeHealth() async {
-    final node = _currentNode;
-    if (node == null) return false;
-
+    final String baseUrl;
     try {
-      final uri = node.uri;
-      if (uri.host.isEmpty) return false;
-      // Probe the selected RPC endpoint, not the locally stored wallet balance.
-      // Native health checks use a short timeout and do not require a synced node.
-      return await base_node.checkNodeHealth(baseUrl: uri.toString());
+      baseUrl = _nodeUrl;
     } catch (e) {
-      // URI/bridge failures must also reach Cake's health checker as a failed probe.
-      printV('Minotari node health check failed: $e');
+      printV('Minotari node not usable: $e');
       return false;
     }
+    await MinotariFfi.ensureRustLibInitialized();
+    return base_node.checkNodeHealth(baseUrl: baseUrl);
   }
 
+  /// Gives up a pending send the node keeps refusing and releases its inputs. cw stops this
+  /// wallet's scan before it decides, so whether it abandons or refuses, the scan is started
+  /// again and the balance and history reloaded. Returns cw's note on what abandoning does
+  /// not do.
+  Future<String> abandonSend(String transactionId) => minotariThenRestore(
+        () async {
+          final note = await _requireFfi.abandonSend(
+              passphrase: _dbPassphrase, transactionId: transactionId);
+          // Only a send Cake abandoned can be paid again; cw's history doesn't tell.
+          await _sendNotes.update((notes) => notes.abandoned.add(transactionId));
+          return note;
+        },
+        () async {
+          if (_keepScanning) unawaited(_scan());
+          await updateBalance();
+          await updateTransactions();
+        },
+      );
+
+  /// Records abandoned sends that were mined after all; those the user wasn't warned about
+  /// before are added to [abandonAlerts].
+  void _addMinedAfterAbandon(Iterable<String> ids) {
+    _minedAfterAbandon.addAll(ids);
+    final unwarned = ids.where((id) => !_sendNotes.alerted.contains(id));
+    if (unwarned.isNotEmpty) runInAction(() => abandonAlerts.addAll(unwarned));
+  }
+
+  /// The user has been warned that abandoned send [transactionId] was mined after all.
+  Future<void> markAbandonAlerted(String transactionId) async {
+    runInAction(() => abandonAlerts.remove(transactionId));
+    await _sendNotes.update((notes) => notes.alerted.add(transactionId));
+  }
+
+  /// The mnemonic, read from the wallet database for the seed page; null for wallets
+  /// imported from keys (only those keep their keys in the .keys file).
+  Future<String?> loadSeed() async {
+    if (viewPrivateKeyHex != null) return null;
+    return (await _requireFfi.seedWords(passphrase: _dbPassphrase)).join(' ');
+  }
+
+  static const _transactionsPageSize = 100;
+
+  /// The whole history, read page by page.
   @override
-  Future<Map<String, MinotariTransactionInfo>> fetchTransactions(
-      {bool Function()? isCurrent}) async {
+  Future<Map<String, MinotariTransactionInfo>> fetchTransactions() async {
     final ffi = _ffi;
     if (ffi == null) return {};
-    final txDtos = await fetchAllMinotariTransactionPages(ffi.getTransactions);
 
-    return mapMinotariTransactions(txDtos, _dtoToTransactionInfo, isCurrent: isCurrent);
+    final result = <String, MinotariTransactionInfo>{};
+    for (var offset = 0;; offset += _transactionsPageSize) {
+      final page = await ffi.getTransactions(limit: _transactionsPageSize, offset: offset);
+      for (final txDto in page) {
+        result[txDto.id] = _dtoToTransactionInfo(txDto);
+      }
+      if (page.length < _transactionsPageSize) return result;
+    }
   }
 
   @override
-  Future<String> signMessage(String message, {String? address}) async {
-    final mnemonic = _mnemonic;
-    if (mnemonic == null || mnemonic.trim().isEmpty) {
-      throw StateError('A view-only wallet cannot sign messages.');
-    }
-
-    final signingAddress = address?.trim();
-    if (signingAddress != null &&
-        signingAddress.isNotEmpty &&
-        signingAddress != walletAddresses.address) {
-      throw ArgumentError('Minotari can only sign messages with this wallet\'s address.');
-    }
-
-    final seedWords = mnemonic.trim().split(RegExp(r'\s+'));
-    if (seedWords.length != 24) {
-      throw StateError('Invalid seed: expected 24 words, got ${seedWords.length}');
-    }
-
-    // The native adapter derives the same spend key as wallet creation/send.
-    // A Tari passphrase encrypts the account at rest; it is not a signing input.
-    return MinotariFfi.signMessage(message, seedWords: seedWords);
-  }
+  Future<String> signMessage(String message, {String? address}) => _requireFfi.signMessage(message);
 
   @override
   Future<bool> verifyMessage(String message, String signature, {String? address}) async {
-    final verifyingAddress = address?.trim();
-    if (verifyingAddress == null || verifyingAddress.isEmpty || signature.trim().isEmpty) {
-      return false;
-    }
+    await MinotariFfi.ensureRustLibInitialized();
+    return MinotariFfi.verifyMessage(
+      message: message,
+      signature: signature,
+      address: address ?? this.address,
+    );
+  }
 
+  @override
+  Future<void> updateBalance() => _refreshBalance();
+
+  Future<void> _refreshBalance({bool force = true}) async {
+    if (_closed) return;
     try {
-      return await MinotariFfi.verifyMessage(message, signature.trim(), address: verifyingAddress);
-    } catch (_) {
-      // Match Cake's boolean verification contract for malformed addresses/signatures.
-      return false;
+      await _balanceUpdates.refresh(force: force);
+    } catch (e) {
+      printV('Error updating balance: $e');
     }
   }
 
   Future<MinotariBalance?> _readBalance() async {
     final data = await _ffi?.getBalance();
-    if (data == null) {
-      return null;
-    }
-    return MinotariBalance(
-      available: data["available"]!,
-      pendingIncoming: data["pendingIncoming"]!,
-      pendingOutgoing: data["pendingOutgoing"]!,
-    );
+    return data == null
+        ? null
+        : MinotariBalance(
+            available: data.available.toInt(),
+            pendingIncoming: data.unconfirmed.toInt(),
+            pendingOutgoing: data.locked.toInt());
   }
 
-  @override
-  Future<void> updateBalance({bool Function()? isCurrent}) async {
+  Future<void> _finishRestoreHistory() {
     final generation = _historyGeneration;
-    bool current() => generation == _historyGeneration && (isCurrent?.call() ?? true);
-    try {
-      await _balanceUpdates.refresh(isCurrent: current);
-    } catch (e) {
-      printV('Error updating balance: $e');
-      if (isCurrent != null) rethrow;
-    }
+    return _transactionsReload = runAfterMinotariQueue(_transactionsReload, () async {
+      if (!_restoringHistory || generation != _historyGeneration) return;
+      _restoringHistory = false;
+      try {
+        final transactions = await fetchTransactions();
+        if (generation != _historyGeneration) {
+          _restoringHistory = true;
+          return;
+        }
+        walletInfo.isRecovery = false;
+        await walletInfo.save();
+        if (generation != _historyGeneration) return;
+        runInAction(() {
+          transactionHistory.transactions
+            ..clear()
+            ..addAll(transactions);
+        });
+        _reloadTransactionsWhenSynced = false;
+      } catch (_) {
+        _restoringHistory = true;
+        walletInfo.isRecovery = true;
+        rethrow;
+      }
+    });
   }
 
-  Future<void> updateTransactions({bool Function()? isCurrent}) {
+  /// Replaces the history with the database's. Reloads queue behind a running one, so the
+  /// last caller always sees a reload that started after its request.
+  Future<void> updateTransactions() {
     final generation = _historyGeneration;
-    final current = isCurrent ?? () => generation == _historyGeneration;
-    return _runHistoryUpdate(current, () => _loadTransactions(isCurrent: current));
+    return _transactionsReload = runAfterMinotariQueue(_transactionsReload, () async {
+      if (generation != _historyGeneration) return;
+      final transactions = await fetchTransactions();
+      if (generation != _historyGeneration) return;
+      runInAction(() {
+        transactionHistory.transactions
+          ..clear()
+          ..addAll(transactions);
+      });
+    });
   }
 
-  Future<void> _loadTransactions({bool Function()? isCurrent}) async {
-    if (_isTransactionUpdating) return;
-    _isTransactionUpdating = true;
-    try {
-      final transactions = await fetchTransactions(isCurrent: isCurrent);
-      if (isCurrent != null && !isCurrent()) return;
-      transactionHistory.addMany(transactions);
-      await transactionHistory.save();
-      _historyNeedsReload = false;
-      printV('Minotari history full load: ${transactions.length} transactions');
-    } catch (e) {
-      printV('Error updating transactions: $e');
-      _historyNeedsReload = true;
-      if (isCurrent != null) rethrow;
-    } finally {
-      _isTransactionUpdating = false;
-    }
-  }
-
-  MinotariTransactionInfo _dtoToTransactionInfo(DisplayedTransactionDto txDto) {
+  MinotariTransactionInfo _dtoToTransactionInfo(DisplayedTransactionDto txDto, {bool? restoring}) {
     final direction = txDto.direction == DisplayedTransactionDirection.incoming
         ? TransactionDirection.incoming
         : TransactionDirection.outgoing;
 
-    final isPending = minotariIsPending(txDto.status);
+    // Only sends still on their way; a rejected (or abandoned), cancelled or reorganized one
+    // is not pending, and shows its own status instead.
+    final isPending = const {
+      DisplayedTransactionStatus.pending,
+      DisplayedTransactionStatus.unconfirmed,
+      DisplayedTransactionStatus.locked,
+    }.contains(txDto.status);
     final date = parseMinotariTransactionDate(txDto.blockchain.timestamp) ?? DateTime.now();
-    final fee = txDto.fee?.amount.toInt();
+    final fee = txDto.fee?.amount;
 
     final txInfo = MinotariTransactionInfo(
       id: txDto.id,
-      amount: txDto.amount.toInt(),
+      amount: Money(txDto.amount, CryptoCurrency.xtm),
       date: date,
       direction: direction,
       isPending: isPending,
-      fee: fee,
+      fee: fee == null ? null : Money(fee, CryptoCurrency.xtm),
       height: txDto.blockchain.blockHeight.toInt(),
       confirmations: txDto.blockchain.confirmations.toInt(),
       payrefs: txDto.payrefs,
-      isTestnet: isTestnet,
     );
 
     txInfo.additionalInfo['source'] = txDto.source.name;
     txInfo.additionalInfo['status'] = txDto.status.name;
-    txInfo.additionalInfo['historyStatus'] = minotariHistoryStatus(txDto.status);
-    // Presentation only: native status, isPending, confirmations and balances
-    // remain unchanged until the scanner's confirmation monitor updates them.
-    txInfo.additionalInfo['restoringHistory'] = _restoringHistory && isPending;
+    // Block-discovery events have isInitialSync=false even on a fresh restore.
+    // Use this wallet's recovery state; native status and spendability stay intact.
+    txInfo.additionalInfo['restoringHistory'] =
+        (restoring ?? (_restoringHistory && !_scanCaughtUp)) &&
+            txDto.status == DisplayedTransactionStatus.unconfirmed &&
+            txDto.blockchain.blockHeight > BigInt.zero;
     txInfo.additionalInfo['amountDisplay'] = txDto.amountDisplay;
 
     if (txDto.message != null && txDto.message!.isNotEmpty) {
@@ -896,6 +931,32 @@ abstract class MinotariWalletBase
       txInfo.additionalInfo['counterpartyEmoji'] = txDto.counterparty!.addressEmoji;
     }
 
+    addMinotariSendNotes(
+      txInfo.additionalInfo,
+      id: txDto.id,
+      status: txDto.status,
+      notes: _sendNotes,
+      minedAfterAbandon: _minedAfterAbandon,
+    );
+
     return txInfo;
+  }
+
+  /// Queued behind a running full reload, so its older snapshot can't overwrite these.
+  void _processNewTransactions(List<DisplayedTransactionDto> transactions) {
+    final generation = _historyGeneration;
+    // Capture arrival-time state before Waiting changes it; the final reload is
+    // queued after these events and removes every preview marker.
+    final restoring = _restoringHistory && !_scanCaughtUp;
+    _transactionsReload = runAfterMinotariQueue(
+      _transactionsReload,
+      () => runInAction(() {
+        if (generation != _historyGeneration) return;
+        for (final txDto in transactions) {
+          transactionHistory.transactions[txDto.id] =
+              _dtoToTransactionInfo(txDto, restoring: restoring);
+        }
+      }),
+    );
   }
 }

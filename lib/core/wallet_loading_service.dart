@@ -11,6 +11,7 @@ import 'package:cake_wallet/src/widgets/alert_with_two_actions.dart';
 import 'package:cake_wallet/utils/exception_handler.dart';
 import 'package:cake_wallet/utils/show_pop_up.dart';
 import 'package:cw_core/exceptions.dart' show WalletDeprecationException;
+import "package:cw_core/exceptions/cake_exception.dart";
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_core/wallet_base.dart';
 import 'package:cw_core/wallet_info.dart';
@@ -62,8 +63,8 @@ class WalletLoadingService {
       {String? password, bool isBackground = false}) async {
     try {
       if (!isBackground) {
-        await sharedPreferences.setString(
-            PreferencesKey.backgroundSyncLastTrigger(name), DateTime.now().toIso8601String());
+        unawaited(sharedPreferences.setString(
+            PreferencesKey.backgroundSyncLastTrigger(name), DateTime.now().toIso8601String()));
       }
       final walletService = walletServiceFactory.call(type);
       final walletPassword = password ?? (await keyService.getWalletPassword(walletName: name));
@@ -75,6 +76,9 @@ class WalletLoadingService {
 
       return wallet;
     } catch (error, stack) {
+      // A headless job must fail this wallet without opening a different one,
+      // changing the user's selection, or attempting foreground seed recovery.
+      if (isBackground) rethrow;
       String corruptedWalletsSeeds = "Corrupted wallets seeds (if retrievable, empty otherwise):";
 
       if (error is WalletDeprecationException) {
@@ -155,7 +159,7 @@ class WalletLoadingService {
         throw msg;
       }
       if (wallet == null) {
-        throw Exception("Wallet is null");
+        throw WalletOpenException("Wallet is null");
       }
       return wallet;
     }

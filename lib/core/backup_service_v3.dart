@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
 import 'package:cake_wallet/core/backup_service.dart';
+import 'package:cake_wallet/di.dart';
+import 'package:cake_wallet/minotari/minotari.dart';
+import 'package:cake_wallet/store/app_store.dart';
 import 'package:cake_wallet/.secrets.g.dart' as secrets;
 import 'package:cake_backup/backup.dart' as cake_backup;
 import 'package:cake_wallet/utils/package_info.dart';
@@ -12,6 +16,7 @@ import 'package:cw_core/db/sqlite.dart';
 import 'package:cw_core/root_dir.dart';
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_core/wallet_info.dart';
+import 'package:cw_core/wallet_service.dart';
 import 'package:cw_core/wallet_type.dart';
 import 'package:flutter/foundation.dart';
 
@@ -147,19 +152,14 @@ class BackupMetadata {
   }
 }
 
-class IncompatibleBackupAppException implements Exception {
-  IncompatibleBackupAppException({
+class IncompatibleBackupAppException extends InvalidBackupException {
+  const IncompatibleBackupAppException({
     required this.sourceAppName,
     required this.currentAppName,
-  });
+  }) : super("This backup was created in $sourceAppName and cannot be restored in $currentAppName.");
 
   final String sourceAppName;
   final String currentAppName;
-
-  @override
-  String toString() {
-    return 'This backup was created in $sourceAppName and cannot be restored in $currentAppName.';
-  }
 }
 
 class BackupServiceV3 extends $BackupService {
@@ -181,7 +181,7 @@ class BackupServiceV3 extends $BackupService {
       final bytesRead = raf.readIntoSync(buffer);
 
       if (bytesRead == 0) {
-        throw Exception('Invalid backup file: empty file');
+        throw InvalidBackupException('Invalid backup file: empty file');
       }
 
       // Check if first byte is version 1 or 2
@@ -221,7 +221,7 @@ class BackupServiceV3 extends $BackupService {
     final version = getVersionFile(file);
     switch (version) {
       case BackupVersion.unknown:
-        throw Exception('unknown_backup_version');
+        throw UnknownBackupVersionException();
       case BackupVersion.v1:
         final data = file.readAsBytesSync();
         final backupBytes = data.toList()..removeAt(0);
@@ -251,7 +251,7 @@ class BackupServiceV3 extends $BackupService {
 
     final metadataFile = archive.findFile('metadata.json');
     if (metadataFile == null) {
-      throw Exception('Invalid v3 backup: missing metadata.json');
+      throw InvalidBackupException('Invalid v3 backup: missing metadata.json');
     }
     final metadataBytes = metadataFile.rawContent!.readBytes();
     final metadataString = utf8.decode(metadataBytes);
@@ -260,7 +260,7 @@ class BackupServiceV3 extends $BackupService {
 
     final dataFile = archive.findFile('data.bin');
     if (dataFile == null) {
-      throw Exception('Invalid v3 backup: missing data.bin');
+      throw InvalidBackupException('Invalid v3 backup: missing data.bin');
     }
     final dataStream = dataFile.rawContent!.getStream();
 
@@ -279,8 +279,7 @@ class BackupServiceV3 extends $BackupService {
 
       // readBytes stores position internally, so we don't need to think about it.
       if (chunk.sha512sum.encrypted != chunkChecksum) {
-        throw Exception(
-            'Invalid v3 backup: chunk (${chunk.length.encrypted} bytes) checksum mismatch at index $chunkIndex\n'
+        throw InvalidBackupException('Invalid v3 backup: chunk (${chunk.length.encrypted} bytes) checksum mismatch at index $chunkIndex\n'
             'expected: ${chunk.sha512sum.encrypted}\n'
             'got: $chunkChecksum');
       }
@@ -290,7 +289,7 @@ class BackupServiceV3 extends $BackupService {
 
     final sha512sum = (await sha512.bind(decryptedData.openRead()).first).toString();
     if (sha512sum.toString() != metadata.sha512sum) {
-      throw Exception('Invalid v3 backup: SHA512 checksum mismatch\n'
+      throw InvalidBackupException('Invalid v3 backup: SHA512 checksum mismatch\n'
           'expected: ${metadata.sha512sum}\n'
           'got: $sha512sum');
     }
@@ -316,14 +315,18 @@ class BackupServiceV3 extends $BackupService {
           continue outer;
         }
       }
+      final outPath = $BackupService.safeExtractPath(appDir.path, file);
+      if (outPath == null) {
+        throw InvalidBackupException("unsafe backup entry: $filename, please contact support");
+      }
       printV("restoring: $filename");
       if (file.isFile) {
-        final output = File('${appDir.path}/' + filename)..createSync(recursive: true);
+        final output = File(outPath)..createSync(recursive: true);
         final outputStream = OutputFileStream(output.path);
         file.writeContent(outputStream);
         outputStream.flush();
       } else {
-        final dir = Directory('${appDir.path}/' + filename);
+        final dir = Directory(outPath);
         if (!dir.existsSync()) {
           dir.createSync(recursive: true);
         }
@@ -372,6 +375,22 @@ class BackupServiceV3 extends $BackupService {
     }
   }
 
+  /// Lets every wallet type that has wallets make its files consistent before they are
+  /// copied. One that fails or hangs is logged and the backup goes ahead, as before.
+  Future<void> _prepareWalletsForBackup() async {
+    final types = (await WalletInfo.getAll()).map((info) => info.type).toSet();
+    for (final type in types) {
+      try {
+        await getIt
+            .get<WalletService>(param1: type)
+            .prepareForBackup()
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        printV('Preparing $type wallets for backup failed: $e');
+      }
+    }
+  }
+
   Future<File> exportBackupFileV3(String password, {String nonce = secrets.backupSalt}) async {
     final metadata = BackupMetadata(
       version: BackupVersion.v3,
@@ -404,33 +423,49 @@ class BackupServiceV3 extends $BackupService {
     }
 
     tmpDir.createSync();
-    zipEncoder.create(archivePath);
-    outer:
-    for (var entity in fileEntities) {
-      if (entity.path == archivePath || entity.path == tmpDir.path) {
-        continue;
-      }
-      for (var ignore in $BackupService.ignoreFiles) {
-        final filename = entity.absolute.path;
-        if (filename.endsWith(ignore) && !filename.contains("wallets/")) {
-          printV("ignoring backup file: $filename");
-          continue outer;
+    // Minotari's wallet.db holds the only copy of its seeds: stop the open wallet's scan so
+    // nothing writes it between the checkpoint and the end of the copy, then restart it.
+    // shortcut: a scan Android background sync runs in its own engine isn't stopped; upgrade
+    // to a cw snapshot (VACUUM INTO / SQLite backup API) once cw_tari_wallet offers one.
+    // Only a running scan is stopped and restarted, as on app pause.
+    final openWallet = getIt.get<AppStore>().wallet;
+    final pausedMinotari =
+        openWallet?.type == WalletType.minotari && minotari!.isScanning(openWallet!)
+            ? openWallet
+            : null;
+    await pausedMinotari?.stopSync();
+    try {
+      await _prepareWalletsForBackup();
+      zipEncoder.create(archivePath);
+      outer:
+      for (var entity in fileEntities) {
+        if (entity.path == archivePath || entity.path == tmpDir.path) {
+          continue;
+        }
+        for (var ignore in $BackupService.ignoreFiles) {
+          final filename = entity.absolute.path;
+          if (filename.endsWith(ignore) && !filename.contains("wallets/")) {
+            printV("ignoring backup file: $filename");
+            continue outer;
+          }
+        }
+
+        if (entity.statSync().type == FileSystemEntityType.directory) {
+          await zipEncoder.addDirectory(Directory(entity.path));
+        } else {
+          await zipEncoder.addFile(File(entity.path));
         }
       }
-
-      if (entity.statSync().type == FileSystemEntityType.directory) {
-        await zipEncoder.addDirectory(Directory(entity.path));
-      } else {
-        await zipEncoder.addFile(File(entity.path));
-      }
+      await keychainDumpFile.writeAsBytes(keychainDump.toList());
+      await preferencesDumpFile.writeAsString(preferencesDump);
+      await transactionDescriptionDumpFile.writeAsString(transactionDescriptionDump);
+      await zipEncoder.addFile(preferencesDumpFile, '~_preferences_dump');
+      await zipEncoder.addFile(keychainDumpFile, '~_keychain_dump');
+      await zipEncoder.addFile(transactionDescriptionDumpFile, '~_transaction_descriptions_dump');
+      await zipEncoder.close();
+    } finally {
+      if (pausedMinotari != null) unawaited(pausedMinotari.startSync());
     }
-    await keychainDumpFile.writeAsBytes(keychainDump.toList());
-    await preferencesDumpFile.writeAsString(preferencesDump);
-    await transactionDescriptionDumpFile.writeAsString(transactionDescriptionDump);
-    await zipEncoder.addFile(preferencesDumpFile, '~_preferences_dump');
-    await zipEncoder.addFile(keychainDumpFile, '~_keychain_dump');
-    await zipEncoder.addFile(transactionDescriptionDumpFile, '~_transaction_descriptions_dump');
-    await zipEncoder.close();
 
     final dataBinUnencrypted = File(archivePath);
 

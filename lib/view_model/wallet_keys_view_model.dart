@@ -7,6 +7,7 @@ import 'package:cake_wallet/store/app_store.dart';
 import 'package:cake_wallet/wownero/wownero.dart';
 import 'package:cake_wallet/zano/zano.dart';
 import 'package:cake_wallet/zcash/zcash.dart';
+import "package:cw_core/exceptions/cake_exception.dart";
 import 'package:cw_core/transaction_direction.dart';
 import 'package:cw_core/transaction_info.dart';
 import 'package:cw_core/wallet_base.dart';
@@ -32,7 +33,7 @@ abstract class WalletKeysViewModelBase with Store {
         _title = _getInitialTitle(_appStore.wallet!) {
     _populateKeysItems();
 
-    reaction((_) => _appStore.wallet, (WalletBase? _wallet) {
+    _walletReaction = reaction((_) => _appStore.wallet, (WalletBase? _wallet) {
       _populateKeysItems();
     });
 
@@ -102,7 +103,39 @@ abstract class WalletKeysViewModelBase with Store {
 
   AppStore get appStore => _appStore;
 
-  String get seed => _wallet.seed != null ? _wallet.seed! : '';
+  late final ReactionDisposer _walletReaction;
+  bool _isDisposed = false;
+
+  /// Minotari wallets keep neither the mnemonic nor an imported spend private key; they
+  /// live here only until [dispose].
+  String? _minotariSeed;
+  String? _minotariSpendKey;
+
+  late final Future<void> seedLoaded =
+      _wallet.type == WalletType.minotari ? _loadMinotariSecrets() : Future.value();
+
+  Future<void> _loadMinotariSecrets() async {
+    final seed = await minotari!.getSeed(_wallet);
+    final spendKey = await minotari!.getSpendPrivateKey(_wallet);
+    if (_isDisposed) return;
+    _minotariSeed = seed;
+    _minotariSpendKey = spendKey;
+    _populateKeysItems();
+  }
+
+  /// Ends the app-store reaction (which would otherwise keep this view model, and the
+  /// seed, alive) and drops the on-demand seed.
+  void dispose() {
+    _isDisposed = true;
+    _walletReaction();
+    _minotariSeed = null;
+    _minotariSpendKey = null;
+    items.clear();
+  }
+
+  String? get _seed => _wallet.seed ?? _minotariSeed;
+
+  String get seed => _seed ?? '';
 
   bool get isLegacySeedOnly =>
       [WalletType.monero, WalletType.wownero].contains(_wallet.type) &&
@@ -172,6 +205,7 @@ abstract class WalletKeysViewModelBase with Store {
       case WalletType.base:
       case WalletType.arbitrum:
       case WalletType.bsc:
+      case WalletType.robinhood:
       case WalletType.solana:
       case WalletType.tron:
         items.addAll([
@@ -234,7 +268,10 @@ abstract class WalletKeysViewModelBase with Store {
         ]);
         break;
       case WalletType.minotari:
-        keys = minotari!.getKeys(_wallet);
+        keys = {
+          ...minotari!.getKeys(_wallet),
+          if (_minotariSpendKey != null) 'privateSpendKey': _minotariSpendKey!,
+        };
         break;
       case WalletType.none:
       case WalletType.haven:
@@ -325,6 +362,8 @@ abstract class WalletKeysViewModelBase with Store {
         return 'arbitrum-wallet';
       case WalletType.bsc:
         return 'bsc-wallet';
+      case WalletType.robinhood:
+        return "robinhood-wallet";
       case WalletType.solana:
         return 'solana-wallet';
       case WalletType.tron:
@@ -342,7 +381,7 @@ abstract class WalletKeysViewModelBase with Store {
       case WalletType.minotari:
         return 'minotari-wallet';
       case WalletType.none:
-        throw Exception('Unexpected wallet type: ${_wallet.type.toString()} for wallet keys');
+        throw BadWalletTypeException('Unexpected wallet type: ${_wallet.type.toString()} for wallet keys', _wallet.type);
     }
   }
 
@@ -372,11 +411,27 @@ abstract class WalletKeysViewModelBase with Store {
   Future<Map<String, String>> get _queryParams async {
     final restoreHeightResult = await restoreHeight;
     return {
-      if (_wallet.seed != null) 'seed': _wallet.seed!,
-      if (_wallet.seed == null && _wallet.hexSeed != null) 'hexSeed': _wallet.hexSeed!,
-      if (_wallet.seed == null && _wallet.privateKey != null) 'private_key': _wallet.privateKey!,
+      if (_seed != null) 'seed': _seed!,
+      if (_seed == null && _wallet.hexSeed != null) 'hexSeed': _wallet.hexSeed!,
+      if (_seed == null && _wallet.privateKey != null) 'private_key': _wallet.privateKey!,
       if (restoreHeightResult != null) ...{'height': restoreHeightResult},
-      if (_wallet.passphrase != null) 'passphrase': _wallet.passphrase!
+      if (_wallet.passphrase != null) 'passphrase': _wallet.passphrase!,
+      if (_wallet.type == WalletType.minotari) ..._minotariKeyParams,
+    };
+  }
+
+  /// A wallet imported from keys restores from them: the spend private key, or for a
+  /// watch-only wallet the public one. Seed wallets carry no keys here.
+  Map<String, String> get _minotariKeyParams {
+    final keys = minotari!.getKeys(_wallet);
+    final viewKey = keys['privateViewKey'];
+    if (viewKey == null) return {};
+    return {
+      'view_key': viewKey,
+      if (_minotariSpendKey != null)
+        'spend_key': _minotariSpendKey!
+      else if (keys['publicSpendKey'] != null)
+        'spend_pubkey': keys['publicSpendKey']!,
     };
   }
 

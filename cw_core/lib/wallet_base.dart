@@ -94,6 +94,12 @@ abstract class WalletBase<BalanceType extends Balance, HistoryType extends Trans
 
   int calculateEstimatedFee(TransactionPriority priority, int? amount);
 
+  /// The fee for [amount], or for sending the whole balance when [sendAll]. Wallets that
+  /// must ask a node for it override this; the rest compute it with [calculateEstimatedFee].
+  Future<int> estimatedFeeFor(TransactionPriority priority, int? amount,
+          {bool sendAll = false}) async =>
+      calculateEstimatedFee(priority, amount);
+
   Future<void> updateEstimatedFeesParams(TransactionPriority? priority) async {}
 
   // void fetchTransactionsAsync(
@@ -141,6 +147,11 @@ abstract class WalletBase<BalanceType extends Balance, HistoryType extends Trans
   bool get hasPayjoinSupport => false;
   bool get hasLightningSupport => false;
   bool get hasSilentPaymentsScanning => false;
+
+  bool get hasCoinControl => false;
+  bool get hasAccountsSupport => false;
+  bool get hasNativeAccounts => false;
+  bool get canToggleMultiAccounts => hasAccountsSupport && !hasNativeAccounts;
 
   // hardware wallet - bitbox, ledger, trezor.
   // we also have airgap wallets but those can't sign messages

@@ -7,7 +7,6 @@ import 'package:cake_wallet/src/widgets/primary_button.dart';
 import 'package:cake_wallet/src/widgets/seedphrase_grid_widget.dart';
 import 'package:cake_wallet/src/widgets/text_info_box.dart';
 import 'package:cake_wallet/src/widgets/warning_box_widget.dart';
-import 'package:cake_wallet/utils/brightness_util.dart';
 import 'package:cake_wallet/utils/clipboard_util.dart';
 import 'package:cake_wallet/utils/show_bar.dart';
 import 'package:cake_wallet/view_model/wallet_keys_view_model.dart';
@@ -38,15 +37,41 @@ class WalletKeysPage extends BasePage {
               content: S.of(context).do_not_share_warning_text.toUpperCase(),
             ),
           ),
-          Expanded(
-            child: WalletKeysPageBody(
-              walletKeysViewModel: walletKeysViewModel,
-            ),
-          ),
+          Expanded(child: _WalletKeysSeedLoader(walletKeysViewModel)),
         ],
       ),
     );
   }
+}
+
+/// Shows the keys once the seed has loaded, and disposes the view model when the page closes,
+/// even if that happens while the seed is still loading.
+class _WalletKeysSeedLoader extends StatefulWidget {
+  const _WalletKeysSeedLoader(this.walletKeysViewModel);
+
+  final WalletKeysViewModel walletKeysViewModel;
+
+  @override
+  State<_WalletKeysSeedLoader> createState() => _WalletKeysSeedLoaderState();
+}
+
+class _WalletKeysSeedLoaderState extends State<_WalletKeysSeedLoader> {
+  @override
+  void dispose() {
+    widget.walletKeysViewModel.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<void>(
+        future: widget.walletKeysViewModel.seedLoaded,
+        builder: (context, snapshot) => snapshot.connectionState != ConnectionState.done
+            ? const Center(child: CircularProgressIndicator())
+            // Reopening the page loads the seed again.
+            : snapshot.hasError
+                ? Center(child: Text('${snapshot.error}', textAlign: TextAlign.center))
+                : WalletKeysPageBody(walletKeysViewModel: widget.walletKeysViewModel),
+      );
 }
 
 class WalletKeysPageBody extends StatefulWidget {
@@ -406,12 +431,10 @@ class _WalletKeysPageBodyState extends State<WalletKeysPageBody>
   Future<void> _showQR(BuildContext context) async {
     final url = await widget.walletKeysViewModel.getUrl(false);
 
-    BrightnessUtil.changeBrightnessForFunction(() async {
-      await Navigator.pushNamed(
-        context,
-        Routes.fullscreenQR,
-        arguments: QrViewData(data: url.toString(), version: QrVersions.auto),
-      );
-    });
+    await Navigator.pushNamed(
+      context,
+      Routes.fullscreenQR,
+      arguments: QrViewData(data: url.toString(), version: QrVersions.auto),
+    );
   }
 }

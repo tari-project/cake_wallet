@@ -17,6 +17,7 @@ import 'package:cake_wallet/utils/device_info.dart';
 import 'package:cake_wallet/view_model/link_view_model.dart';
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_core/utils/socket_health_logger.dart';
+import 'package:cake_wallet/minotari/minotari.dart';
 import 'package:cw_core/wallet_base.dart';
 import 'package:cw_core/wallet_type.dart';
 import 'package:flutter/material.dart';
@@ -66,6 +67,7 @@ class RootState extends State<Root> with WidgetsBindingObserver {
   Stream<bool> get isInactive => _isInactiveController.stream;
   StreamController<bool> _isInactiveController;
   bool _isInactive;
+  WalletBase? _pausedMinotariWallet;
   bool _postFrameCallback;
   bool _requestAuth;
 
@@ -79,6 +81,7 @@ class RootState extends State<Root> with WidgetsBindingObserver {
 
     widget.authService.requireAuth().then((value) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         setState(() => _requestAuth = value);
       });
     });
@@ -93,6 +96,7 @@ class RootState extends State<Root> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     stream?.cancel();
     _walletReactionDisposer?.call();
     _deepLinksReactionDisposer?.call();
@@ -135,10 +139,6 @@ class RootState extends State<Root> with WidgetsBindingObserver {
 
     bool requireAuth = await widget.authService.requireAuth();
 
-    if (widget.authenticationStore.state == AuthenticationState.allowedCreate) {
-      requireAuth = false;
-    }
-
     if (!requireAuth &&
         (widget.authenticationStore.state == AuthenticationState.allowed ||
             widget.authenticationStore.state == AuthenticationState.allowedCreate)) {
@@ -170,26 +170,38 @@ class RootState extends State<Root> with WidgetsBindingObserver {
           return;
         }
 
-        if (!_isInactive && widget.authenticationStore.state == AuthenticationState.allowed) {
-          setState(() => _setInactive(true));
+        if (!_isInactive &&
+            (widget.authenticationStore.state == AuthenticationState.allowed ||
+                widget.authenticationStore.state == AuthenticationState.allowedCreate)) {
+          setState(() {
+            _requestAuth = false;
+            _setInactive(true);
+          });
         }
 
         if (widget.appStore.wallet?.type == WalletType.bitcoin) {
           bitcoin!.stopPayjoinSessions(widget.appStore.wallet!);
         }
 
+        // Minotari scans continuously; don't keep polling the node in the background. Only a
+        // running scan is remembered: resume must not start a failed or connecting wallet.
+        final pausing = widget.appStore.wallet;
+        if (pausing?.type == WalletType.minotari && minotari!.isScanning(pausing!)) {
+          _pausedMinotariWallet = pausing;
+          pausing.stopSync();
+        }
+
         widget.tradeMonitor.stopTradeMonitoring();
 
         break;
       case AppLifecycleState.resumed:
-
-        // Reset inactive state when app resumes
-        if (_isInactive) setState(() => _setInactive(false));
-
         widget.authService.requireAuth().then((value) {
           if (mounted) {
             setState(() {
               _requestAuth = value;
+              if (!value && WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+                _setInactive(false);
+              }
             });
           }
         });
@@ -197,6 +209,14 @@ class RootState extends State<Root> with WidgetsBindingObserver {
             widget.appStore.settingsStore.usePayjoin) {
           bitcoin!.resumePayjoinSessions(widget.appStore.wallet!);
         }
+
+        // Only a scan the pause stopped: resumed also fires without a pause (Face ID, the
+        // app switcher), and restarting a running scan would start it over.
+        if (_pausedMinotariWallet != null &&
+            identical(_pausedMinotariWallet, widget.appStore.wallet)) {
+          _pausedMinotariWallet!.startSync();
+        }
+        _pausedMinotariWallet = null;
 
         widget.tradeMonitor.resumeTradeMonitoring();
 

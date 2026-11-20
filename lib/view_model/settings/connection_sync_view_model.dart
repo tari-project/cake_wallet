@@ -13,6 +13,8 @@ import 'package:cake_wallet/tron/tron.dart';
 import 'package:cake_wallet/utils/show_pop_up.dart';
 import 'package:cake_wallet/utils/tor.dart';
 import 'package:cw_core/balance.dart';
+import 'package:cw_core/exceptions/cake_exception.dart';
+import 'package:cw_core/sync_status.dart';
 import 'package:cw_core/transaction_history.dart';
 import 'package:cw_core/transaction_info.dart';
 import 'package:cw_core/wallet_base.dart';
@@ -206,6 +208,9 @@ abstract class ConnectionSyncViewModelBase with Store {
   bool get useBaseScan => _settingsStore.useBaseScan;
 
   @computed
+  bool get useRobinhoodScan => _settingsStore.useRobinhoodScan;
+
+  @computed
   bool get useArbiScan => _settingsStore.useArbiScan;
 
   @computed
@@ -222,6 +227,9 @@ abstract class ConnectionSyncViewModelBase with Store {
 
   @computed
   bool get canUseBaseScan => _wallet.chainId == 8453;
+
+  @computed
+  bool get canUseRobinhoodScan => _wallet.chainId == 4663;
 
   @computed
   bool get canUseArbiScan => _wallet.chainId == 42161;
@@ -272,6 +280,12 @@ abstract class ConnectionSyncViewModelBase with Store {
   }
 
   @action
+  void setUseRobinhoodScan(bool value) {
+    _settingsStore.useRobinhoodScan = value;
+    evm!.updateScanProviderUsageState(_wallet, value);
+  }
+
+  @action
   void setUseTronGrid(bool value) {
     _settingsStore.useTronGrid = value;
     tron!.updateTronGridUsageState(_wallet, value);
@@ -308,7 +322,19 @@ abstract class ConnectionSyncViewModelBase with Store {
     }
     _settingsStore.currentBuiltinTor = value;
     if (value) {
-      unawaited(ensureTorStarted(context: context).then((_) async {
+      // Minotari can't use Tor: its scan stops before Tor starts, and stays stopped (Failed)
+      // if Tor fails to start, so nothing more leaves over clearnet.
+      final isMinotari = _wallet.type == WalletType.minotari;
+      final stopMinotari = isMinotari ? _wallet.stopSync() : Future<void>.value();
+      unawaited(stopMinotari
+          .then((_) => ensureTorStarted(context: context.mounted ? context : null))
+          .catchError((Object e, StackTrace s) {
+        if (isMinotari) {
+          _wallet.syncStatus = FailedSyncStatus(
+              cause: const TorUnsupportedException('Minotari cannot use Tor yet.'));
+        }
+        Error.throwWithStackTrace(e, s);
+      }).then((_) async {
         if (_settingsStore.currentBuiltinTor == false) return;
         int? chainId;
         if (isEVMCompatibleChain(_wallet.type)) {

@@ -3,7 +3,9 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:blockchain_utils/hex/hex.dart';
+import "package:cw_core/exceptions/cake_exception.dart";
 import 'package:cw_core/node_list.dart';
+import 'package:cw_core/minotari_node_response.dart';
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_core/utils/proxy_socket/abstract.dart';
 import 'package:cw_core/utils/proxy_wrapper.dart';
@@ -292,6 +294,7 @@ class Node {
       case WalletType.polygon:
       case WalletType.base:
       case WalletType.bsc:
+      case WalletType.robinhood:
       case WalletType.arbitrum:
       case WalletType.solana:
       case WalletType.tron:
@@ -301,7 +304,7 @@ class Node {
         return Uri.parse(
             "http${isSSL ? "s" : ""}://$uriRaw${path!.startsWith("/") || path!.isEmpty ? path : "/$path"}");
       case WalletType.none:
-        throw Exception('Unexpected type ${type.toString()} for Node uri');
+        throw BadWalletTypeException('Unexpected type ${type.toString()} for Node uri', type);
     }
   }
 
@@ -354,6 +357,7 @@ class Node {
         case WalletType.base:
         case WalletType.arbitrum:
         case WalletType.bsc:
+        case WalletType.robinhood:
         case WalletType.solana:
         case WalletType.tron:
         case WalletType.dogecoin:
@@ -367,35 +371,6 @@ class Node {
           return requestMinotariNode();
         case WalletType.none:
           return false;
-      }
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<bool> requestMinotariNode() async {
-    try {
-      final baseUri = uri;
-      if (baseUri.host.isEmpty) return false;
-      // Use the same root RPC path as Minotari's native HTTP client.
-      final client = ProxyWrapper().getHttpIOClient();
-      try {
-        final response = await client
-            .get(baseUri.resolve("/get_tip_info"))
-            .timeout(const Duration(seconds: 5));
-        if (response.statusCode != 200) return false;
-
-        final data = jsonDecode(response.body);
-        if (data is! Map<String, dynamic> || data["is_synced"] is! bool) return false;
-        // Liveness does not require sync completion or chain metadata yet.
-        final metadata = data["metadata"];
-        return metadata == null ||
-            (metadata is Map<String, dynamic> &&
-                metadata["best_block_height"] is int &&
-                (metadata["best_block_height"] as int) >= 0);
-      } finally {
-        // Closing the client also cancels an outstanding request after timeout.
-        client.close();
       }
     } catch (_) {
       return false;
@@ -545,7 +520,7 @@ class Node {
           data["error"] != null ||
           data["balance"] == null ||
           data["receivable"] == null) {
-        throw Exception(
+        throw ServerResponseException(
             "Error while trying to get balance! ${data["error"] != null ? data["error"] : ""}");
       }
       return true;
@@ -567,6 +542,21 @@ class Node {
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (err) {
       printV("Failed to request ethereum server: $err");
+      return false;
+    }
+  }
+
+  /// The Tari base node HTTP API answers `GET /get_tip_info`. Like the wallet, the probe
+  /// refuses what Minotari won't use: Tor (it can't yet), a SOCKS proxy, or a non-SSL node.
+  Future<bool> requestMinotariNode() async {
+    if (CakeTor.requestedOrStarted || useSocksProxy || !isSSL) return false;
+    try {
+      final response = await ProxyWrapper()
+          .get(clearnetUri: uri.replace(path: '${uri.path}/get_tip_info'.replaceAll('//', '/')))
+          .timeout(Duration(seconds: 10));
+      return response.statusCode == 200 && isMinotariTipResponse(response.body);
+    } catch (e) {
+      printV("error: $e");
       return false;
     }
   }
@@ -693,7 +683,7 @@ class DaemonRpc {
 
     if (initialResponse.statusCode != 401 ||
         !initialResponse.headers.containsKey('www-authenticate')) {
-      throw Exception('Unexpected response: ${initialResponse.body}');
+      throw ServerResponseException('Unexpected response: ${initialResponse.body}');
     }
 
     // Extract Digest details from `WWW-Authenticate` header.
@@ -720,13 +710,13 @@ class DaemonRpc {
     );
 
     if (authenticatedResponse.statusCode != 200) {
-      throw Exception('RPC call failed: ${authenticatedResponse.body}');
+      throw ServerResponseException('RPC call failed: ${authenticatedResponse.body}');
     }
 
     final Map<String, dynamic> result =
         jsonDecode(authenticatedResponse.body) as Map<String, dynamic>;
     if (result['error'] != null) {
-      throw Exception('RPC Error: ${result['error']}');
+      throw ServerResponseException('RPC Error: ${result['error']}');
     }
 
     return result['result'] as Map<String, dynamic>;

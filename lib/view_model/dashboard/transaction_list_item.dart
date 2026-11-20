@@ -1,8 +1,8 @@
+import 'package:cake_wallet/view_model/dashboard/minotari_transaction_status.dart';
 import 'package:cake_wallet/entities/balance_display_mode.dart';
 import 'package:cake_wallet/entities/fiat_currency.dart';
 import 'package:cake_wallet/evm/evm.dart';
 import 'package:cake_wallet/generated/i18n.dart';
-import 'package:cake_wallet/minotari/minotari.dart';
 import 'package:cake_wallet/reactions/wallet_connect.dart';
 import 'package:cake_wallet/solana/solana.dart';
 import 'package:cake_wallet/store/app_store.dart';
@@ -57,17 +57,15 @@ class TransactionListItem extends ActionListItem with Keyable {
 
   String get formattedTitle {
     if (balanceViewModel.wallet.type == WalletType.minotari) {
-      final status = transaction.additionalInfo['historyStatus'] as String?;
-      if (status != null) return status;
+      if (const {'locked', 'cancelled', 'rejected', 'reorganized'}
+          .contains(transaction.additionalInfo['status'])) {
+        return minotariTransactionStatus(transaction);
+      }
       if (transaction.additionalInfo['restoringHistory'] == true) {
         return transaction.direction == TransactionDirection.incoming
             ? S.current.received
             : S.current.sent;
       }
-    }
-    if (balanceViewModel.wallet.type == WalletType.bitcoin &&
-        transaction.additionalInfo['hasMissingInputTx'] == true) {
-      return 'Transaction has missing data';
     }
 
     if (transaction.additionalInfo['isIronwoodMigration'] == true) {
@@ -102,8 +100,8 @@ class TransactionListItem extends ActionListItem with Keyable {
       case WalletType.haven:
       case WalletType.zano:
         return 10;
-      case WalletType.wownero:
       case WalletType.minotari:
+      case WalletType.wownero:
         return 3;
       case WalletType.litecoin:
         bool isPegOut = (transaction.additionalInfo["isPegOut"] as bool?) ?? false;
@@ -124,8 +122,8 @@ class TransactionListItem extends ActionListItem with Keyable {
           return ' (${transaction.confirmations}/10)';
         }
         break;
-      case WalletType.wownero:
       case WalletType.minotari:
+      case WalletType.wownero:
         if (transaction.confirmations >= 0 && transaction.confirmations < 3) {
           return ' (${transaction.confirmations}/3)';
         }
@@ -215,6 +213,7 @@ class TransactionListItem extends ActionListItem with Keyable {
       case WalletType.nano:
       case WalletType.decred:
       case WalletType.zcash:
+      case WalletType.minotari:
         amount = calculateFiatAmountRaw(
           cryptoAmount: double.parse(transaction.amount.toString()),
           price: price,
@@ -224,6 +223,7 @@ class TransactionListItem extends ActionListItem with Keyable {
       case WalletType.base:
       case WalletType.arbitrum:
       case WalletType.bsc:
+      case WalletType.robinhood:
         final asset = assetOfTransaction;
         final price = balanceViewModel.fiatConversionStore.prices[asset];
         amount = calculateFiatAmountRaw(
@@ -259,12 +259,6 @@ class TransactionListItem extends ActionListItem with Keyable {
           price: price,
         ).withLocalSeperator(_appStore.settingsStore.languageCode);
         break;
-      case WalletType.minotari:
-        amount = calculateFiatAmountRaw(
-            cryptoAmount: double.parse(transaction.amount.toString()),
-            price: price);
-        break;
-
       case WalletType.none:
       case WalletType.banano:
       case WalletType.haven:

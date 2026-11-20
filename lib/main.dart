@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:cake_wallet/anonpay/anonpay_invoice_info.dart';
 import 'package:cake_wallet/app_scroll_behavior.dart';
+import "package:cake_wallet/ci_build_overlay.dart";
 import 'package:cake_wallet/core/auth_service.dart';
 import 'package:cake_wallet/core/background_sync.dart';
 import 'package:cake_wallet/core/background_sync_session.dart';
@@ -65,6 +66,7 @@ import 'package:cw_core/window_size.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_daemon/flutter_daemon.dart';
 import "package:flutter_localizations/flutter_localizations.dart";
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:hive/hive.dart';
@@ -103,6 +105,12 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
         // Convert the shortcut type to a URI and add it to the stream
         final uri = Uri.parse('cakewallet://quickaction/$shortcutType');
         quickActionsStream.sink.add(uri);
+      }).then((_) {
+        // On Android initialize() reads the launch shortcut from the intent and calls the handler
+        // before returning, so no shortcut by now means there isn't one. iOS delivers it later.
+        if (Platform.isAndroid && !initialShortcutCompleter.isCompleted) {
+          initialShortcutCompleter.complete(null);
+        }
       });
 
       quickActions.setShortcutItems(<ShortcutItem>[
@@ -115,7 +123,8 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
             localizedSubtitle: 'Receive funds')
       ]);
 
-      // Fallback in case the initial shortcut is not received (normal cold start)
+      // Fallback in case the initial shortcut is not received (normal cold start on iOS, or if
+      // initialize() fails on Android)
       Future<void>.delayed(const Duration(milliseconds: 500), () {
         if (!initialShortcutCompleter.isCompleted) {
           initialShortcutCompleter.complete(null);
@@ -125,7 +134,6 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
       initialShortcutCompleter.complete(null);
     }
 
-    final initialQuickAction = await initialShortcutCompleter.future;
     FlutterError.onError = ExceptionHandler.onError;
 
     /// A callback that is invoked when an unhandled error occurs in the root
@@ -136,7 +144,11 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
       return true;
     };
 
-    await BackgroundSyncSession().cancelActive();
+    if (Platform.isAndroid) {
+      await BackgroundSyncSession().cancelActive();
+    } else {
+      await FlutterDaemon().unmarkBackgroundSync();
+    }
     await initDb();
 
     try {
@@ -177,6 +189,9 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
       zcash?.unlockDatabase(zcashPassword);
     }
 
+    // Awaited only now so the fallback timeout runs concurrently with the startup work above
+    final initialQuickAction = await initialShortcutCompleter.future;
+
     // Basically when we're running a test
     if (topLevelKey != null) {
       runApp(
@@ -189,17 +204,22 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
         ),
       );
     } else {
-      runApp(App(
-          key: topLevelKey,
-          initialQuickAction: initialQuickAction,
-          quickActionsStream: quickActionsStream.stream));
+      runApp(
+        CiBuildOverlay(
+          settingsStore: getIt.get<SettingsStore>(),
+          child: App(
+              key: topLevelKey,
+              initialQuickAction: initialQuickAction,
+              quickActionsStream: quickActionsStream.stream),
+        ),
+      );
     }
 
     isAppRunning = true;
   }, (error, stackTrace) async {
     if (!isAppRunning) {
       runApp(
-        TopLevelErrorWidget(error: error, stackTrace: stackTrace),
+        CiBuildOverlay(child: TopLevelErrorWidget(error: error, stackTrace: stackTrace)),
       );
     }
 
@@ -309,7 +329,7 @@ Future<void> initializeAppConfigs({bool loadWallet = true}) async {
     payjoinSessionSource: payjoinSessionSource,
     anonpayInvoiceInfo: anonpayInvoiceInfo,
     havenSeedStore: havenSeedStore,
-    initialMigrationVersion: 72,
+    initialMigrationVersion: 73,
   );
 }
 
@@ -518,31 +538,37 @@ class TopLevelErrorWidget extends StatelessWidget {
 
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
-  final session = BackgroundSyncSession();
-  var started = false;
+  final session = Platform.isAndroid ? BackgroundSyncSession() : null;
+  bool shouldUnmark = false;
   try {
     printV("Background sync triggered");
     printV("- WidgetsFlutterBinding.ensureInitialized()");
     WidgetsFlutterBinding.ensureInitialized();
     printV("- DartPluginRegistrant.ensureInitialized()");
     DartPluginRegistrant.ensureInitialized();
-    printV("- BackgroundSyncSession.begin()");
-    if (!session.begin()) {
+    final alreadyRunning = session != null
+        ? !session.begin()
+        : await FlutterDaemon().markBackgroundSync();
+    if (alreadyRunning) {
       printV("Background sync already in progress");
       return;
     }
-    started = true;
+    shouldUnmark = true;
     printV("Starting background sync");
     setRootDirFromEnv();
     await initDb();
-    final backgroundSync = BackgroundSync(isCancelled: () => session.cancelled);
+    final backgroundSync = BackgroundSync(isCancelled: () => session?.cancelled ?? false);
     await initializeAppConfigs(loadWallet: false);
     await backgroundSync.sync();
     printV("Background sync completed");
   } finally {
-    if (started) {
+    if (shouldUnmark) {
       printV("Unmarking background sync");
-      await session.complete();
+      if (session != null) {
+        await session.complete();
+      } else {
+        await FlutterDaemon().unmarkBackgroundSync();
+      }
     } else {
       printV("Not unmarking background sync");
     }

@@ -26,6 +26,8 @@ import "package:mobx/mobx.dart";
 import "package:permission_handler/permission_handler.dart";
 import "package:trezor_connect/trezor_connect.dart" as connect_sdk;
 import "package:trezor_flutter/trezor_flutter.dart" as sdk;
+import "package:cw_core/exceptions/cake_exception.dart";
+
 
 part "trezor_connect_view_model.g.dart";
 
@@ -48,6 +50,7 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
     }
   }
 
+  StreamSubscription<sdk.BleConnectionState>? _connectionChangeSubscription;
   final connect_sdk.TrezorConnect trezorConnect;
   final SecureStorage _secureStorage;
 
@@ -61,7 +64,7 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
       return DeviceConnectionType.supportedConnectionTypes(
         WalletType.monero,
         HardwareWalletType.trezor,
-        Platform.isIOS,
+        isIOS: Platform.isIOS,
       ).isNotEmpty;
     }
 
@@ -126,6 +129,14 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
       trezorUSB.devices.then((devices) => devices.map(TrezorHardwareWalletDevice.new).toList());
 
   @override
+  Future<List<HardwareWalletDevice>> getConnectedBleDevices() async {
+    if (!_bleIsInitialized) {
+      return const [];
+    }
+    return (await trezorBLE.devices).map(TrezorHardwareWalletDevice.new).toList();
+  }
+
+  @override
   Future<void> stopScanning() async {
     if (_bleIsInitialized) {
       await trezorBLE.stopScanning();
@@ -139,6 +150,49 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
 
   Completer<String?>? _pinCompleter;
   Completer<TrezorDeviceSettings>? _settingsCompleter;
+
+  /// Settings that successfully opened a session, kept in memory (never persisted) per wallet id
+  /// so a reconnect during a send doesn't ask for the wallet options / passphrase again.
+  final Map<String, TrezorDeviceSettings> _sessionSettings = {};
+  TrezorDeviceSettings? _lastUsedSettings;
+  String? _reconnectWalletId;
+
+  /// The wallet the live session (and with it the passphrase) belongs to, null if unknown
+  String? _sessionWalletId;
+
+  /// Call right before opening the connect page to reconnect the device for [wallet].
+  /// Only then the settings of the previous session are reused; creating or restoring a wallet
+  /// always asks for them.
+  void prepareReconnect(WalletBase wallet) => _reconnectWalletId = wallet.id;
+
+  /// Call when the connect page opened after [prepareReconnect] is closed, so an attempt that was
+  /// backed out of can never leak its settings into a later, unrelated connect (e.g. a restore).
+  void cancelReconnect() => _reconnectWalletId = null;
+
+  /// Call once a wallet was created / restored with the live session
+  void bindSessionToWallet(WalletBase wallet) {
+    _sessionWalletId = wallet.id;
+    final settings = _lastUsedSettings;
+    if (settings != null) {
+      _sessionSettings[wallet.id] = settings;
+      _lastUsedSettings = null;
+    }
+  }
+
+  /// False if the live session is known to belong to another wallet, e.g. one with a different
+  /// passphrase. Using it would only fail when signing.
+  bool isSessionFor(WalletBase wallet) =>
+      _sessionWalletId == null || _sessionWalletId == wallet.id;
+
+  Future<void> dropSession() async {
+    final client = _client;
+    _client = null;
+    _sessionWalletId = null;
+    _lastUsedSettings = null;
+    try {
+      await client?.connection.disconnect();
+    } catch (_) {}
+  }
 
   @observable
   TrezorParingState paringState = TrezorParingState.initial;
@@ -163,10 +217,17 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
     isConnecting = true;
     paringState = TrezorParingState.initial;
 
+    final reconnectWalletId = _reconnectWalletId;
+    _reconnectWalletId = null;
+    final reusedSettings = reconnectWalletId != null ? _sessionSettings[reconnectWalletId] : null;
+
     try {
       final trezorInterface =
           device.connectionType == HardwareWalletConnectionType.ble ? trezorBLE : trezorUSB;
       final connection = await trezorInterface.connect(device.device);
+
+      _connectionChangeSubscription ??=
+          trezorInterface.deviceStateChanges.listen(_connectionChangeListener);
 
       if (!isRetry) {
         unawaited(
@@ -191,10 +252,7 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
 
         final res = await _pinCompleter!.future;
         paringState = TrezorParingState.verifyingPin;
-        if (res == null) {
-          throw Exception();
-        }
-        return res;
+        return res!;
       }
 
       final deviceInfo = await _deviceName;
@@ -214,10 +272,15 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
           _state!.pairingCredentials.any((c) => c.autoconnect == true);
       final isAutoPairingAvailable = _client is sdk.TrezorClientV2 && !hasAutoPairingCredentials;
 
-      paringState =
-          TrezorParingState.awaitingSettings(isAutoPairingAvailable: isAutoPairingAvailable);
-      _settingsCompleter = Completer<TrezorDeviceSettings>();
-      final settings = await _settingsCompleter!.future;
+      final TrezorDeviceSettings settings;
+      if (reusedSettings != null) {
+        settings = reusedSettings;
+      } else {
+        paringState =
+            TrezorParingState.awaitingSettings(isAutoPairingAvailable: isAutoPairingAvailable);
+        _settingsCompleter = Completer<TrezorDeviceSettings>();
+        settings = await _settingsCompleter!.future;
+      }
 
       paringState = TrezorParingState.awaitingPassphrase;
       if (settings.enableAutoParing && isAutoPairingAvailable) {
@@ -237,18 +300,28 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
         await _client!.createSession(passphrase);
       }
 
+      _lastUsedSettings = settings;
+      _sessionWalletId = reconnectWalletId;
       paringState = TrezorParingState.success;
       return true;
     } catch (e) {
       await _client?.connection.disconnect();
       _client = null;
-      _state = sdk.ThpState();
+      _sessionWalletId = null;
+      _lastUsedSettings = null;
+      // Drop the (possibly half way through a handshake) state, the next attempt reloads the
+      // saved pairing credentials instead of asking for the pairing code again.
+      _state = null;
+      if (reconnectWalletId != null) {
+        _sessionSettings.remove(reconnectWalletId);
+      }
       // rethrow;
       paringState = TrezorParingState.fail(e.toString());
       printV(e);
       return false;
     } finally {
       isConnecting = false;
+      _reconnectWalletId = null;
     }
   }
 
@@ -287,6 +360,13 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
 
   @override
   Future<void> initWallet(WalletBase wallet) async {
+    // Only a session that was opened for this wallet may hand its settings to it
+    final lastUsedSettings = _lastUsedSettings;
+    if (lastUsedSettings != null && _sessionWalletId == wallet.id) {
+      _sessionSettings[wallet.id] = lastUsedSettings;
+      _lastUsedSettings = null;
+    }
+
     switch (wallet.type) {
       case WalletType.monero:
         return monero!.setHardwareWalletService(wallet, getHardwareWalletService(wallet.type));
@@ -297,7 +377,7 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
       case WalletType.polygon:
         return evm!.setHardwareWalletService(wallet, getHardwareWalletService(wallet.type));
       default:
-        throw Exception("Unexpected wallet type: ${wallet.type} for trezor");
+        throw BadWalletTypeException('Unexpected wallet type: ${wallet.type} for trezor', wallet.type);
     }
   }
 
@@ -338,7 +418,34 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
       _state = state;
       return state;
     } catch (_) {
-      throw Exception("Unable to save Trezor State");
+      rethrow;
+    }
+  }
+
+  Future<void> _connectionChangeListener(sdk.BleConnectionState event) async {
+    printV("Trezor Device State Changed: $event");
+    if (event != sdk.BleConnectionState.disconnected || isConnecting) {
+      return;
+    }
+
+    final client = _client;
+    if (client == null) {
+      return;
+    }
+
+    // The events aren't device specific, so check if it's actually our Trezor that is gone
+    if (client.connection.connectionType == sdk.ConnectionType.ble) {
+      try {
+        final state = await sdk.UniversalBle.getConnectionState(client.connection.device.id);
+        if (state == sdk.BleConnectionState.connected) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    if (identical(_client, client)) {
+      _client = null;
+      _sessionWalletId = null;
     }
   }
 
@@ -351,6 +458,17 @@ abstract class TrezorConnectViewModelBase extends HardwareWalletViewModel with S
       }
     }
     return true;
+  }
+
+  @override
+  Future<void> close() async {
+    try {
+      await _connectionChangeSubscription?.cancel();
+
+      _connectionChangeSubscription = null;
+      isConnecting = false;
+      await stopScanning();
+    } catch (_) {}
   }
 }
 

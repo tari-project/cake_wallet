@@ -113,6 +113,7 @@ class AddressValidator extends TextValidator {
       case CryptoCurrency.eth:
       case CryptoCurrency.baseEth:
       case CryptoCurrency.arbEth:
+      case CryptoCurrency.robEth:
       case CryptoCurrency.mana:
       case CryptoCurrency.matic:
       case CryptoCurrency.maticpoly:
@@ -202,12 +203,7 @@ class AddressValidator extends TextValidator {
       case CryptoCurrency.doge:
         pattern = r'^D[a-km-zA-HJ-NP-Z1-9]{25,34}';
       case CryptoCurrency.xtm:
-        // RFC-0155: Tari addresses support multiple formats:
-        // - Simplified (35 bytes) ~47 Base58 chars
-        // - Standard (67 bytes) ~91 Base58 chars
-        // - With payment ID: up to 323 bytes ~440 Base58 chars
-        // Base58 charset: 1-9, A-H, J-N, P-Z, a-k, m-z (no 0, O, I, l)
-        pattern = '[123Hdf][234678][1-9A-HJ-NP-Za-km-z]{45,448}';
+        pattern = r'[123Hdf][234678][1-9A-HJ-NP-Za-km-z]{45,448}';
       default:
         return '';
     }
@@ -278,6 +274,7 @@ class AddressValidator extends TextValidator {
       case CryptoCurrency.avaxc:
       case CryptoCurrency.baseEth:
       case CryptoCurrency.arbEth:
+      case CryptoCurrency.robEth:
         return [42];
       case CryptoCurrency.bch:
         return [42, 54, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35];
@@ -390,6 +387,7 @@ class AddressValidator extends TextValidator {
       case CryptoCurrency.maticpoly:
       case CryptoCurrency.baseEth:
       case CryptoCurrency.arbEth:
+      case CryptoCurrency.robEth:
       case CryptoCurrency.arb:
         pattern = '0x[0-9a-zA-Z]+';
       case CryptoCurrency.nano:
@@ -407,7 +405,7 @@ class AddressValidator extends TextValidator {
       case CryptoCurrency.zec:
         pattern = "(?:$zcashAddressPattern|zxviews[a-z0-9]{278})";
       case CryptoCurrency.xtm:
-        pattern = '[123Hdf][234678][1-9A-HJ-NP-Za-km-z]{45,448}';
+        pattern = r'[123Hdf][234678][1-9A-HJ-NP-Za-km-z]{45,448}';
       default:
         if (type.tag == CryptoCurrency.eth.title) {
           pattern = '0x[0-9a-zA-Z]+';

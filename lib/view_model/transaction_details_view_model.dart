@@ -4,6 +4,7 @@ import "package:cake_wallet/entities/priority_for_wallet_type.dart";
 import "package:cake_wallet/entities/transaction_description.dart";
 import "package:cake_wallet/evm/evm.dart";
 import "package:cake_wallet/generated/i18n.dart";
+import "package:cake_wallet/minotari/minotari.dart";
 import "package:cake_wallet/monero/monero.dart";
 import "package:cake_wallet/reactions/wallet_connect.dart";
 import "package:cake_wallet/solana/solana.dart";
@@ -15,9 +16,12 @@ import "package:cake_wallet/src/screens/transaction_details/transaction_details_
 import "package:cake_wallet/src/screens/transaction_details/transaction_expandable_list_item.dart";
 import "package:cake_wallet/store/app_store.dart";
 import "package:cake_wallet/tron/tron.dart";
+import "package:cake_wallet/utils/payment_request.dart";
+import "package:cake_wallet/view_model/dashboard/minotari_transaction_status.dart";
 import "package:cake_wallet/view_model/send/send_view_model.dart";
 import "package:cake_wallet/zano/zano.dart";
 import "package:collection/collection.dart";
+import "package:cw_core/amount/money.dart";
 import "package:cw_core/crypto_currency.dart";
 import "package:cw_core/currency_for_wallet_type.dart";
 import "package:cw_core/transaction_direction.dart";
@@ -56,9 +60,14 @@ bool hasLightningPreimage(TransactionInfo tx) => (tx.additionalInfo["preimage"] 
 
 bool _hasMinotariCounterparty(TransactionDetailsViewModelBase vm) =>
     vm.wallet.type == WalletType.minotari &&
-    vm.transactionInfo.additionalInfo["counterpartyAddress"] != null;
+    (vm.transactionInfo.additionalInfo["counterpartyAddress"] as String?)?.isNotEmpty == true;
 
-/// Display and copy the Base58 encoding of the Minotari counterparty address.
+bool _duplicatesMinotariRecipient(TransactionDetailsViewModelBase vm, String? address) =>
+    _hasMinotariCounterparty(vm) &&
+    vm.transactionInfo.direction == TransactionDirection.outgoing &&
+    address?.trim() == _minotariCounterparty(vm).trim();
+
+/// The Base58 address shown and copied in transaction details.
 String _minotariCounterparty(TransactionDetailsViewModelBase vm) =>
     vm.transactionInfo.additionalInfo["counterpartyAddress"] as String? ?? "";
 
@@ -67,10 +76,6 @@ String _minotariInfo(TransactionDetailsViewModelBase vm, String field) =>
 
 bool _hasMinotariInfo(TransactionDetailsViewModelBase vm, String field) =>
     vm.wallet.type == WalletType.minotari && _minotariInfo(vm, field).isNotEmpty;
-
-bool _isMinotariRestorePreview(TransactionDetailsViewModelBase vm) =>
-    vm.wallet.type == WalletType.minotari &&
-    vm.transactionInfo.additionalInfo['restoringHistory'] == true;
 
 class TxDetailRowDefinition {
   TxDetailRowDefinition({
@@ -126,19 +131,21 @@ class TxDetailRowDefinition {
             WalletType.monero,
             WalletType.minotari
           ].contains(vm.wallet.type) &&
-          !isLightning(vm.transactionInfo) &&
-          !_isMinotariRestorePreview(vm),
+          !isLightning(vm.transactionInfo),
       listItemBuilder: ConfirmationsListItem.new,
     ),
     TxDetailRowDefinition(
       keyString: "standard_list_item_transaction_details_status_key",
       title: "Status",
-      valueGetter: (vm) => _isMinotariRestorePreview(vm)
-          ? vm.transactionInfo.direction == TransactionDirection.incoming
-              ? S.current.received
-              : S.current.sent
-          : _minotariInfo(vm, "status"),
+      valueGetter: (vm) => minotariTransactionStatus(vm.transactionInfo),
       applicable: (vm) => _hasMinotariInfo(vm, "status"),
+    ),
+    TxDetailRowDefinition(
+      keyString: "standard_list_item_transaction_details_minotari_warning_key",
+      title: S.current.warning,
+      valueGetter: (vm) => minotariSendWarning(vm.transactionInfo) ?? "",
+      applicable: (vm) =>
+          vm.wallet.type == WalletType.minotari && minotariSendWarning(vm.transactionInfo) != null,
     ),
     TxDetailRowDefinition(
       keyString: "standard_list_item_transaction_details_source_key",
@@ -210,6 +217,7 @@ class TxDetailRowDefinition {
       },
       applicable: (vm) =>
           vm.showRecipientAddress &&
+          !_duplicatesMinotariRecipient(vm, vm.transactionInfo.to) &&
           (vm.transactionInfo.to != null ||
               [WalletType.monero, WalletType.tron].contains(vm.wallet.type) ||
               vm.wallet.type == WalletType.bitcoin &&
@@ -293,9 +301,7 @@ class TxDetailRowDefinition {
     TxDetailRowDefinition(
       keyString: "standard_list_item_transaction_details_id_key",
       title: S.current.transaction_details_transaction_id,
-      valueGetter: (vm) => vm.wallet.type == WalletType.minotari
-          ? vm.transactionInfo.id
-          : vm.transactionInfo.txHash,
+      valueGetter: (vm) => vm.transactionInfo.txHash,
     ),
   ];
 }
@@ -342,7 +348,8 @@ abstract class TransactionDetailsViewModelBase with Store {
     if (showRecipientAddress && !isRecipientAddressShown) {
       final recipientAddress = description.recipientAddress;
 
-      if (recipientAddress?.isNotEmpty ?? false) {
+      if ((recipientAddress?.isNotEmpty ?? false) &&
+          !_duplicatesMinotariRecipient(this, recipientAddress)) {
         final recipientAddressForDisplay =
             _moneroRecipientAddressForDisplay(recipientAddress!, wallet.type);
         items.add(
@@ -374,8 +381,8 @@ abstract class TransactionDetailsViewModelBase with Store {
 
   String get note {
     final descriptionKey = "${transactionInfo.txHash}_${wallet.walletAddresses.primaryAddress}";
-    final description = transactionDescriptionBox.values
-      .firstWhereOrNull((val) => val.id == descriptionKey || val.id == transactionInfo.txHash,
+    final description = transactionDescriptionBox.values.firstWhereOrNull(
+      (val) => val.id == descriptionKey || val.id == transactionInfo.txHash,
     );
     return description?.transactionNote ?? "";
   }
@@ -466,7 +473,6 @@ abstract class TransactionDetailsViewModelBase with Store {
   }
 
   String get formattedStatus {
-    if (_isMinotariRestorePreview(this)) return "";
     if ([
       WalletType.monero,
       WalletType.haven,
@@ -475,6 +481,10 @@ abstract class TransactionDetailsViewModelBase with Store {
       WalletType.zano,
     ].contains(wallet.type)) {
       return formattedPendingStatus;
+    }
+
+    if (wallet.type == WalletType.minotari && isMinotariFailedTransaction(transactionInfo)) {
+      return " (${minotariTransactionStatus(transactionInfo)})";
     }
 
     return transactionInfo.isPending ? S.current.pending : "";
@@ -486,8 +496,8 @@ abstract class TransactionDetailsViewModelBase with Store {
       case WalletType.haven:
       case WalletType.zano:
         return 10;
-      case WalletType.wownero:
       case WalletType.minotari:
+      case WalletType.wownero:
         return 3;
       case WalletType.litecoin:
         final isPegOut = (transactionInfo.additionalInfo["isPegOut"] as bool?) ?? false;
@@ -550,6 +560,8 @@ abstract class TransactionDetailsViewModelBase with Store {
         return "https://arbiscan.io/tx/${txId}";
       case WalletType.bsc:
         return "https://bscscan.com/tx/${txId}";
+      case WalletType.robinhood:
+        return "https://robinhoodchain.blockscout.com/tx/${txId}";
       case WalletType.polygon:
         return "https://polygonscan.com/tx/${txId}";
       case WalletType.nano:
@@ -571,11 +583,8 @@ abstract class TransactionDetailsViewModelBase with Store {
       case WalletType.zcash:
         return "https://blockchair.com/zcash/transaction/${txId}";
       case WalletType.minotari:
-        if (["reorganized", "cancelled", "rejected"]
-            .contains(transactionInfo.additionalInfo["status"])) {
-          return "";
-        }
-        return transactionInfo.additionalInfo["explorerUrl"] as String? ?? "";
+        if (isMinotariFailedTransaction(transactionInfo)) return '';
+        return transactionInfo.additionalInfo['explorerUrl'] as String? ?? '';
       case WalletType.none:
         return "";
     }
@@ -587,7 +596,7 @@ abstract class TransactionDetailsViewModelBase with Store {
 
   void launchExplorer() {
     if (!hasExplorer) return;
-    launchUrl(Uri.parse(_explorerUrl));
+    launchUrl(Uri.parse(_explorerUrl), mode: LaunchMode.externalApplication);
   }
 
   void addBumpFeesListItems(TransactionInfo tx, String rawTransaction) {
@@ -720,4 +729,47 @@ abstract class TransactionDetailsViewModelBase with Store {
   }
 
   void replaceByFee(String newFee) => sendViewModel.replaceByFee(transactionInfo, newFee);
+
+  /// A Minotari send the node never accepted keeps its inputs locked; cw can give it up
+  /// once it has stalled (it says so if it hasn't yet). Only cw's `pending` sends qualify:
+  /// unconfirmed, rejected, cancelled or reorganized ones can't be abandoned.
+  bool get canAbandonSend =>
+      wallet.type == WalletType.minotari &&
+      wallet.canSend() &&
+      transactionInfo.direction == TransactionDirection.outgoing &&
+      transactionInfo.additionalInfo['status'] == 'pending';
+
+  /// The send's 2FA rule (contact, own wallet or other) applies to abandoning it too.
+  bool get abandonNeeds2FA => sendViewModel.checkThroughChecksToDisplayTOTP(
+      transactionInfo.additionalInfo['counterpartyAddress'] as String? ?? '');
+
+  /// Returns cw's note on what abandoning does not do.
+  Future<String> abandonSend() => minotari!.abandonSend(wallet, transactionInfo.id);
+
+  /// A Minotari send this wallet abandoned that is still rejected can be paid again with a send
+  /// that spends its released inputs, so the two can never both be mined.
+  bool get canPayAgain =>
+      wallet.type == WalletType.minotari &&
+      wallet.canSend() &&
+      transactionInfo.direction == TransactionDirection.outgoing &&
+      transactionInfo.additionalInfo["status"] == "rejected" &&
+      transactionInfo.additionalInfo["abandoned"] == true &&
+      transactionInfo.additionalInfo["counterpartyAddress"] != null;
+
+  /// The send page's arguments to pay the abandoned send again: its recipient and the amount
+  /// it paid them (cw's amount of a send includes its fee).
+  Map<String, dynamic> get payAgainArguments {
+    final fee = transactionInfo.fee?.amount ?? BigInt.zero;
+    final amount = Money(transactionInfo.amount.amount - fee, transactionInfo.amount.currency);
+    return {
+      "paymentRequest": PaymentRequest(
+        transactionInfo.additionalInfo["counterpartyAddress"] as String,
+        amount.toString(),
+        "",
+        "",
+        null,
+      ),
+      "minotariConflictsWithTransactionId": transactionInfo.id,
+    };
+  }
 }

@@ -1,4 +1,5 @@
 import 'package:cw_core/crypto_currency.dart';
+import "package:cw_core/exceptions/cake_exception.dart";
 import 'package:cw_core/hive_type_ids.dart';
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:hive/hive.dart';
@@ -24,6 +25,7 @@ const walletTypes = [
   WalletType.arbitrum,
   WalletType.zcash,
   WalletType.bsc,
+  WalletType.robinhood,
   WalletType.minotari,
 ];
 
@@ -39,7 +41,8 @@ const evmWalletTypes = [
   WalletType.polygon,
   WalletType.base,
   WalletType.arbitrum,
-  WalletType.bsc
+  WalletType.bsc,
+  WalletType.robinhood
 ];
 
 // @HiveType(typeId: WALLET_TYPE_TYPE_ID)
@@ -104,7 +107,10 @@ enum WalletType {
   // @HiveField(19)
   bsc,
 
-  @HiveField(20)
+  // @HiveField(20)
+  robinhood,
+
+  // @HiveField(21)
   minotari,
 }
 
@@ -148,8 +154,10 @@ int serializeToInt(WalletType type) {
       return 17;
     case WalletType.bsc:
       return 18;
-    case WalletType.minotari:
+    case WalletType.robinhood:
       return 19;
+    case WalletType.minotari:
+      return 20;
     case WalletType.none:
       return -1;
   }
@@ -196,9 +204,11 @@ WalletType deserializeFromInt(int raw) {
     case 18:
       return WalletType.bsc;
     case 19:
+      return WalletType.robinhood;
+    case 20:
       return WalletType.minotari;
     default:
-      throw Exception('Unexpected token: $raw for WalletType deserializeFromInt');
+      throw DeserializeException('Unexpected token: $raw for WalletType deserializeFromInt');
   }
 }
 
@@ -242,6 +252,8 @@ String walletTypeToString(WalletType type) {
       return 'Zcash';
     case WalletType.bsc:
       return 'BNB Smart Chain';
+    case WalletType.robinhood:
+      return "Robinhood Chain";
     case WalletType.minotari:
       return 'Minotari';
     case WalletType.none:
@@ -269,6 +281,7 @@ String walletTypeToDisplayName(WalletType type) => switch (type) {
       WalletType.arbitrum => 'Arbitrum',
       WalletType.zcash => 'Zcash',
       WalletType.bsc => 'BNB Smart Chain',
+      WalletType.robinhood => "Robinhood Chain",
       WalletType.minotari => 'Minotari',
       WalletType.none => ''
     };
@@ -293,6 +306,7 @@ String walletTypeToDisplayTicker(WalletType type) => switch (type) {
       WalletType.arbitrum => 'ARB',
       WalletType.zcash => 'ZEC',
       WalletType.bsc => 'BNB',
+      WalletType.robinhood => "",
       WalletType.minotari => 'XTM',
       WalletType.none => ''
     };
@@ -339,6 +353,8 @@ WalletType? _cryptoCurrencyToWalletType(CryptoCurrency type) {
       return WalletType.dogecoin;
     case CryptoCurrency.zec:
       return WalletType.zcash;
+    case CryptoCurrency.robEth:
+      return WalletType.robinhood;
     case CryptoCurrency.xtm:
       return WalletType.minotari;
     default:

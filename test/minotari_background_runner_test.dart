@@ -4,7 +4,6 @@ import 'package:cake_wallet/core/background_sync.dart';
 import 'package:cake_wallet/core/key_service.dart';
 import 'package:cake_wallet/core/wallet_loading_service.dart';
 import 'package:cake_wallet/di.dart';
-import 'package:cake_wallet/minotari/minotari.dart' as xtm;
 import 'package:cake_wallet/store/settings_store.dart';
 import 'package:cw_core/node.dart';
 import 'package:cw_core/sync_status.dart';
@@ -12,6 +11,8 @@ import 'package:cw_core/transaction_history.dart';
 import 'package:cw_core/transaction_info.dart';
 import 'package:cw_core/wallet_base.dart';
 import 'package:cw_core/wallet_type.dart';
+import 'package:cw_core/wallet_service.dart';
+import 'package:cake_wallet/entities/preferences_key.dart';
 import 'package:cw_core/wallet_info.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobx/mobx.dart';
@@ -28,6 +29,8 @@ class _Wallet extends Fake implements WalletBase {
   final WalletType type;
   final List<String> calls;
   Future<void> Function()? scan;
+  bool stopFails = false;
+  bool historyFails = false;
   @override
   String get name => 'disposable';
   @override
@@ -35,7 +38,12 @@ class _Wallet extends Fake implements WalletBase {
   @override
   SyncStatus syncStatus = NotConnectedSyncStatus();
   @override
-  final transactionHistory = _History();
+  TransactionHistoryBase get transactionHistory {
+    if (historyFails) throw StateError('history failed');
+    return _history;
+  }
+
+  final _history = _History();
   @override
   Future<void> connectToNode({required Node node}) async {
     calls.add('connect');
@@ -50,26 +58,16 @@ class _Wallet extends Fake implements WalletBase {
   }
 
   @override
-  Future<void> stopBackgroundSync(String password) async => calls.add('stop');
+  Future<void> stopBackgroundSync(String password) async {
+    calls.add('stop');
+    if (stopFails) throw StateError('stop failed');
+  }
+
   @override
   Future<void> close({bool shouldCleanup = false}) async {
     expect(shouldCleanup, isTrue);
     calls.add('close');
   }
-}
-
-class _Minotari extends Fake implements xtm.Minotari {
-  _Minotari(this.calls);
-  final List<String> calls;
-  bool available = true;
-  @override
-  Future<bool> beginBackgroundSync() async {
-    calls.add('acquire');
-    return available;
-  }
-
-  @override
-  Future<void> endBackgroundSync() async => calls.add('release');
 }
 
 class _Loading extends Fake implements WalletLoadingService {
@@ -96,6 +94,13 @@ class _Info extends Fake implements WalletInfo {
   String get name => 'disposable';
 }
 
+class _UnavailableService extends Fake implements WalletService {
+  @override
+  Future<WalletBase> openWallet(String name, String password) async {
+    throw StateError('wallet unavailable');
+  }
+}
+
 class _Settings extends Fake implements SettingsStore {
   @override
   bool get currentBuiltinTor => false;
@@ -110,11 +115,9 @@ class _Keys extends Fake implements KeyService {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  final original = xtm.minotari;
   final calls = <String>[];
   late _Wallet wallet;
   late _Loading loading;
-  late _Minotari adapter;
   late Future<List<WalletInfo>> Function() loadWallets;
   BackgroundSync runner({bool Function()? isCancelled}) =>
       BackgroundSync(isCancelled: isCancelled, loadWallets: () => loadWallets());
@@ -124,8 +127,6 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     wallet = _Wallet(type, calls);
     loading = _Loading(wallet);
-    adapter = _Minotari(calls);
-    xtm.minotari = adapter;
     getIt.registerSingleton<WalletLoadingService>(loading);
     loadWallets = () async => [_Info(type)];
     getIt.registerSingleton<SettingsStore>(_Settings());
@@ -134,23 +135,29 @@ void main() {
 
   setUp(configure);
   tearDown(() async {
-    xtm.minotari = original;
     await getIt.reset();
   });
 
-  test('XTM acquires before loading; completes one pass and closes before releasing', () async {
+  test('upstream paused budget closes its own session without reconnecting', () async {
+    wallet.syncStatus = PausedSyncStatus();
     await runner().sync();
-    expect(calls, ['acquire', 'load', 'connect', 'start', 'close', 'release']);
+    expect(calls, ['load', 'stop', 'close']);
   });
-  test('headless runner waits for its stable persisted wallet snapshot', () async {
+  test('foreground-owned scan is left to native session handover', () async {
+    wallet.syncStatus = HandledByForegroundSyncStatus();
+    await runner().sync();
+    expect(calls, ['load', 'stop', 'close']);
+  });
+  test('headless runner waits for its persisted wallet snapshot', () async {
     final loaded = Completer<List<WalletInfo>>();
     loadWallets = () => loaded.future;
+    wallet.syncStatus = PausedSyncStatus();
     final job = runner().sync();
     await Future<void>.delayed(Duration.zero);
     expect(calls, isEmpty);
     loaded.complete([_Info(WalletType.minotari)]);
     await job;
-    expect(calls, ['acquire', 'load', 'connect', 'start', 'close', 'release']);
+    expect(calls, ['load', 'stop', 'close']);
   });
   test('hardware, Haven and Decred exclusions are preserved', () async {
     loadWallets = () async => [
@@ -161,53 +168,55 @@ void main() {
     await runner().sync();
     expect(calls, isEmpty);
   });
-  test('busy XTM runtime skips loading without releasing someone else\'s lease', () async {
-    adapter.available = false;
-    await runner().sync();
-    expect(calls, ['acquire']);
-  });
-  test('load failure releases XTM ownership so later job may retry', () async {
-    loading.fail = true;
-    await runner().sync();
-    expect(calls, ['acquire', 'load', 'release']);
-    calls.clear();
-    loading.fail = false;
-    await runner().sync();
-    expect(calls.last, 'release');
-    expect(calls, contains('start'));
-  });
-  test('failed XTM scan still closes and releases', () async {
-    wallet.scan = () async => throw StateError('offline');
-    await runner().sync();
-    expect(calls, ['acquire', 'load', 'connect', 'start', 'close', 'release']);
-  });
-  test('cancelling an active XTM pass closes it before releasing', () async {
-    var cancelled = false;
-    final started = Completer<void>();
-    final finish = Completer<void>();
-    wallet.scan = () {
-      started.complete();
-      return finish.future;
-    };
-    final task = runner(isCancelled: () => cancelled).sync();
-    await started.future;
-    cancelled = true;
-    await task;
-    expect(calls.sublist(calls.length - 2), ['close', 'release']);
-    finish.complete();
-  });
   test('already cancelled runner never opens a wallet', () async {
     await runner(isCancelled: () => true).sync();
     expect(calls, isEmpty);
   });
-  test('other currency preserves connect/start/stable-sync/stop/close path', () async {
+  test('cancellation after loading stops and closes before opening another wallet', () async {
+    loadWallets = () async => [_Info(WalletType.minotari), _Info(WalletType.minotari)];
+    await runner(isCancelled: () => calls.contains('load')).sync();
+    expect(calls, ['load', 'stop', 'close']);
+  });
+  test('failed reconnect still stops and closes the loaded session', () async {
+    wallet.scan = () async => throw StateError('offline');
+    await expectLater(runner().sync(), throwsStateError);
+    expect(calls, ['load', 'connect', 'start', 'stop', 'close']);
+  });
+  test('history failure cannot leak the native session', () async {
+    wallet.syncStatus = PausedSyncStatus();
+    wallet.historyFails = true;
+    await expectLater(runner().sync(), throwsStateError);
+    expect(calls, ['load', 'stop', 'close']);
+  });
+  test('stop failure still closes the wallet', () async {
+    wallet.syncStatus = PausedSyncStatus();
+    wallet.stopFails = true;
+    await expectLater(runner().sync(), throwsStateError);
+    expect(calls, ['load', 'stop', 'close']);
+  });
+  test('other currency preserves connect/start/stable-sync/stop/close', () async {
     await configure(WalletType.solana);
     await runner().sync();
-    expect(calls, ['load', 'connect', 'start', 'stop', 'stop', 'close']);
+    expect(calls, ['load', 'connect', 'start', 'stop', 'close']);
   });
-  test('other currency cancellation stops and closes without XTM ownership calls', () async {
+  test('other currency cancellation closes its loaded wallet', () async {
     await configure(WalletType.solana);
     await runner(isCancelled: () => calls.contains('load')).sync();
     expect(calls, ['load', 'stop', 'close']);
+  });
+  test('background open failure preserves selection and does not enter seed recovery', () async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(PreferencesKey.currentWalletName, 'user-selected-wallet');
+    var opens = 0;
+    final realLoading = WalletLoadingService(prefs, _Keys(), (_) {
+      opens++;
+      return _UnavailableService();
+    });
+    await expectLater(
+      realLoading.load(WalletType.minotari, 'unavailable', isBackground: true),
+      throwsA(isA<StateError>().having((e) => e.message, 'original error', 'wallet unavailable')),
+    );
+    expect(opens, 1);
+    expect(prefs.getString(PreferencesKey.currentWalletName), 'user-selected-wallet');
   });
 }

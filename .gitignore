@@ -89,6 +89,11 @@ cw_minotari/ios/Frameworks/
 
 android/key.properties
 android/app/key.jks
+# Signing secrets: keystore passwords and any stray keystore/cert material
+android/app/*.pwd
+*.keystore
+*.jks
+*.p12
 
 **/tool/.secrets-prod.json
 **/tool/.secrets-test.json
@@ -147,6 +152,7 @@ lib/base/base.dart
 lib/arbitrum/arbitrum.dart
 lib/evm/evm.dart
 lib/zcash/zcash.dart
+lib/minotari/minotari.dart
 
 ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
 ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png

@@ -28,10 +28,15 @@ import 'coin_action_button.dart';
 
 class CoinActionRow extends StatelessWidget {
   const CoinActionRow(
-      {super.key, this.lightningMode = false, this.showSwap = true, required this.walletType});
+      {super.key,
+      this.lightningMode = false,
+      this.showSwap = true,
+      this.showSend = true,
+      required this.walletType});
 
   final bool lightningMode;
   final bool showSwap;
+  final bool showSend;
   final WalletType walletType;
 
   @override
@@ -43,45 +48,42 @@ class CoinActionRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         spacing: MediaQuery.of(context).size.width * 0.05,
         children: [
-          CoinActionButton(
-            icon: CakeImageWidget(
-              imageUrl: "assets/new-ui/send.svg",
-              colorFilter: ColorFilter.mode(
-                Theme.of(context).colorScheme.primary,
-                BlendMode.srcIn,
+          if (showSend)
+            CoinActionButton(
+              key: ValueKey("home_page_send_button_key"),
+              icon: CakeImageWidget(
+                imageUrl: "assets/new-ui/send.svg",
+                colorFilter: ColorFilter.mode(
+                  Theme.of(context).colorScheme.primary,
+                  BlendMode.srcIn,
+                ),
               ),
-            ),
-            label: S.of(context).send,
-            action: () {
-              if (FeatureFlag.hasNewUiExtraPages) {
-                final sendPage = getIt.get<NewSendPage>(
-                  param1: SendPageParams(
-                    unspentCoinType:
-                        lightningMode ? UnspentCoinType.lightning : UnspentCoinType.nonMweb,
-                  ),
-                );
+              label: S.of(context).send,
+              action: () {
+                  final sendPage = getIt.get<NewSendPage>(
+                    param1: SendPageParams(
+                      unspentCoinType:
+                          lightningMode ? UnspentCoinType.lightning : UnspentCoinType.nonMweb,
+                    ),
+                  );
 
-                CupertinoScaffold.showCupertinoModalBottomSheet(
-                  context: context,
-                  isDismissible: true,
-                  barrierColor: Colors.black.withAlpha(60),
-                  builder: (context) {
-                    return Material(
-                      child: ModalNavigator(
-                        rootPage: sendPage,
-                        parentContext: context,
-                      ),
-                    );
-                  },
-                );
-              } else {
-                Map<String, dynamic>? args;
-                if (lightningMode) args = {'coinTypeToSpendFrom': UnspentCoinType.lightning};
-                Navigator.of(context).pushNamed(Routes.send, arguments: args);
-              }
-            },
-          ),
+                  CupertinoScaffold.showCupertinoModalBottomSheet(
+                    context: context,
+                    isDismissible: true,
+                    barrierColor: Colors.black.withAlpha(60),
+                    builder: (context) {
+                      return Material(
+                        child: ModalNavigator(
+                          rootPage: sendPage,
+                          parentContext: context,
+                        ),
+                      );
+                    },
+                  );
+              },
+            ),
           CoinActionButton(
+            key: ValueKey("home_page_receive_button_key"),
             icon: CakeImageWidget(
               imageUrl: "assets/new-ui/receive.svg",
               colorFilter: ColorFilter.mode(
@@ -91,7 +93,6 @@ class CoinActionRow extends StatelessWidget {
             ),
             label: S.of(context).receive,
             action: () async {
-              if (FeatureFlag.hasNewUiExtraPages) {
                 final page = getIt.get<NewReceivePage>(param1: lightningMode);
                 CupertinoScaffold.showCupertinoModalBottomSheet(
                   context: context,
@@ -100,21 +101,11 @@ class CoinActionRow extends StatelessWidget {
                     return Material(child: ModalNavigator(parentContext: context, rootPage: page));
                   },
                 );
-              } else {
-                // ToDo: (Konsti) refactor as part of the derivation PR (I hate myself for it)
-                if (lightningMode) {
-                  await getIt<WalletAddressListViewModel>().setAddressType(
-                      bitcoin!.getOptionToType(bitcoin!.getBitcoinLightningReceivePageOption()));
-                } else {
-                  await getIt<WalletAddressListViewModel>().setAddressType(
-                      bitcoin!.getOptionToType(bitcoin!.getBitcoinSegwitPageOption()));
-                }
-                Navigator.of(context).pushNamed(Routes.addressPage);
-              }
             },
           ),
           if (showSwap)
             CoinActionButton(
+              key: ValueKey("home_page_swap_button_key"),
               icon: CakeImageWidget(
                 imageUrl: "assets/new-ui/exchange.svg",
                 colorFilter: ColorFilter.mode(
@@ -126,7 +117,6 @@ class CoinActionRow extends StatelessWidget {
               action: () {
                 final page =
                     getIt.get<NewSwapPage>(param2: lightningMode ? CryptoCurrency.btcln : null);
-                if (FeatureFlag.hasNewUiExtraPages) {
                   CupertinoScaffold.showCupertinoModalBottomSheet(
                     context: context,
                     barrierColor: Colors.black.withAlpha(85),
@@ -136,12 +126,10 @@ class CoinActionRow extends StatelessWidget {
                       parentContext: context,
                     )),
                   );
-                } else {
-                  Navigator.of(context).pushNamed(Routes.exchange);
-                }
               },
             ),
           CoinActionButton(
+            key: ValueKey("home_page_scan_button_key"),
             icon: CakeImageWidget(
               imageUrl: "assets/new-ui/scan.svg",
               colorFilter: ColorFilter.mode(

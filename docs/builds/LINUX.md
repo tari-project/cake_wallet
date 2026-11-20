@@ -30,7 +30,6 @@ pushd scripts
     ./prepare_torch.sh
     ./prepare_zcash.sh
     ./prepare_reown.sh
-    ./build_bitbox_flutter.sh
     pushd android
       ./build_mwebd.sh
     popd
@@ -40,6 +39,7 @@ pushd scripts/linux
     ./build_zcash.sh
     source ./app_env.sh cakewallet
     # source ./app_env.sh monero.com # Uncomment this line to build monero.com
+    ../prepare_minotari.sh linux # --from-source builds it locally (needs Rust, make and python3)
     ./app_config.sh
 popd
 flutter clean

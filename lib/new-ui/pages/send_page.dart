@@ -48,6 +48,7 @@ import "package:cake_wallet/src/widgets/standard_checkbox.dart";
 import "package:cake_wallet/utils/payment_request.dart";
 import "package:cake_wallet/utils/show_pop_up.dart";
 import "package:cake_wallet/view_model/contact_list/contact_list_view_model.dart";
+import "package:cake_wallet/view_model/hardware_wallet/trezor_connect_view_model.dart";
 import "package:cake_wallet/view_model/link_view_model.dart";
 import "package:cake_wallet/view_model/send/output.dart";
 import "package:cake_wallet/view_model/send/send_view_model.dart";
@@ -164,6 +165,7 @@ class SendPageParams {
     SendPageModes? mode,
     this.unspentCoinType = UnspentCoinType.any,
     this.initialCurrency,
+    this.minotariConflictsWithTransactionId,
   }) : mode = mode ?? SendPageModes.normal;
 
   final PaymentRequest? initialPaymentRequest;
@@ -171,6 +173,9 @@ class SendPageParams {
   final SendPageModes mode;
   final CryptoCurrency? initialCurrency;
   final UnspentCoinType unspentCoinType;
+
+  /// The abandoned Minotari send this send pays again.
+  final String? minotariConflictsWithTransactionId;
 }
 
 class NewSendPage extends StatefulWidget {
@@ -189,6 +194,7 @@ class NewSendPage extends StatefulWidget {
     if (params.initialCurrency != null) {
       sendViewModel.selectedCryptoCurrency = params.initialCurrency!;
     }
+    sendViewModel.minotariConflictsWithTransactionId = params.minotariConflictsWithTransactionId;
   }
 
   final SendViewModel sendViewModel;
@@ -315,6 +321,7 @@ class _NewSendPageState extends State<NewSendPage> {
       controller.dispose();
     }
     _addressFocusNode.dispose();
+    widget.sendViewModel.dispose();
     super.dispose();
   }
 
@@ -345,6 +352,11 @@ class _NewSendPageState extends State<NewSendPage> {
   @override
   Widget build(BuildContext context) => Observer(
         builder: (_) {
+          // Every way in (Send, Scan, payment links, asset details, cards) builds this page;
+          // a watch-only wallet gets a notice instead of a form it can't use.
+          if (!widget.sendViewModel.wallet.canSend()) {
+            return SafeArea(child: Center(child: Text(S.of(context).watching)));
+          }
           final output = widget.sendViewModel.outputs[_selectedOutput];
           final recipientChain = widget.sendViewModel.isEVMWallet
               ? evm!.getChainInfoByChainId(_currentEvmChainIdOrMainnet())
@@ -463,6 +475,7 @@ class _NewSendPageState extends State<NewSendPage> {
                                               child: Text(S.of(context).address_or_alias),
                                             ),
                                             NewSendAddressInput(
+                                              key: ValueKey("send_page_address_input_key"),
                                               displayName: output.displayName,
                                               validator: output.isParsedAddress
                                                   ? widget.sendViewModel.textValidator
@@ -533,6 +546,7 @@ class _NewSendPageState extends State<NewSendPage> {
                                           // test/new-ui/widgets/send_page/send_amount_input_test.dart.
                                           Text(S.of(context).amount),
                                           NewSendAmountInput(
+                                            key: ValueKey("send_page_amount_input_key"),
                                             validator: output.sendAll
                                                 ? widget.sendViewModel.allAmountValidator
                                                 : widget.sendViewModel.amountValidator(output),
@@ -609,7 +623,10 @@ class _NewSendPageState extends State<NewSendPage> {
                                                   subtitle:
                                                       "~${output.estimatedFee} ${widget.sendViewModel.currencySymbol} (${output.estimatedFeeFiatAmount} ${widget.sendViewModel.fiatCurrency})",
                                                   // Without fee priorities the row does nothing,
-                                                  // so it must not be announced as interactive.
+                                                  // so it must not be announced as interactive or
+                                                  // show a tappable arrow.
+                                                  showArrow: widget
+                                                      .sendViewModel.feesViewModel.hasFeesPriority,
                                                   onTap: widget.sendViewModel.feesViewModel
                                                           .hasFeesPriority
                                                       ? () =>
@@ -861,8 +878,23 @@ class _NewSendPageState extends State<NewSendPage> {
     }
 
     if (widget.sendViewModel.wallet.isHardwareWallet) {
+      final trezorVM = widget.sendViewModel.hardwareWalletViewModel;
+      if (trezorVM is TrezorConnectViewModel &&
+          widget.sendViewModel.walletType == WalletType.bitcoin &&
+          trezorVM.isConnected(WalletType.bitcoin) &&
+          !trezorVM.isSessionFor(widget.sendViewModel.wallet)) {
+        // The live session belongs to another wallet (passphrase); open one for this wallet
+        await trezorVM.dropSession();
+      }
+
       if (!widget.sendViewModel.hardwareWalletViewModel!
           .isConnected(widget.sendViewModel.walletType)) {
+        final hardwareWalletVM = widget.sendViewModel.hardwareWalletViewModel;
+        if (hardwareWalletVM is TrezorConnectViewModel &&
+            widget.sendViewModel.walletType == WalletType.bitcoin) {
+          hardwareWalletVM.prepareReconnect(widget.sendViewModel.wallet);
+        }
+
         await Navigator.of(context).pushNamed(
           Routes.connectDevices,
           arguments: ConnectDevicePageParams(
@@ -875,6 +907,9 @@ class _NewSendPageState extends State<NewSendPage> {
             isReconnect: false,
           ),
         );
+        if (hardwareWalletVM is TrezorConnectViewModel) {
+          hardwareWalletVM.cancelReconnect();
+        }
 
         // Recheck to handle tap-backs
         if (!widget.sendViewModel.hardwareWalletViewModel!
@@ -909,7 +944,7 @@ class _NewSendPageState extends State<NewSendPage> {
       conditionToDetermineIfToUse2FA: check,
       onAuthSuccess: (value) async {
         if (value) {
-          if (!widget.mode.popOnConfirmation && Navigator.canPop(context)) {
+          if (!widget.mode.popOnConfirmation && mounted && Navigator.canPop(context)) {
             Navigator.of(context, rootNavigator: true).pop();
           }
           showModalBottomSheet(
@@ -969,7 +1004,7 @@ class _NewSendPageState extends State<NewSendPage> {
     final balanceByAsset = <CryptoCurrency, CurrencyPickerBalance>{
       for (final r in widget.sendViewModel.balanceViewModel.formattedBalances)
         r.asset: CurrencyPickerBalance(
-          amount: "${r.availableBalance} ${r.asset.title}",
+          amount: "${r.availableBalance} ${r.formattedAssetTitle}",
           fiat: isFiatDisabled ? null : "${r.fiatAvailableBalanceRaw} ${r.fiatCurrency?.symbol}",
           fiatValue: isFiatDisabled ? null : double.tryParse(r.fiatAvailableBalanceRaw),
         ),

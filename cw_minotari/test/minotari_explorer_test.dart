@@ -1,3 +1,5 @@
+import 'package:cw_core/amount/money.dart';
+import 'package:cw_core/crypto_currency.dart';
 import "package:cw_core/transaction_direction.dart";
 import "package:cw_minotari/minotari_explorer.dart";
 import "package:cw_minotari/minotari_transaction_info.dart";
@@ -10,7 +12,7 @@ void main() {
     final refs = [reference];
     final tx = MinotariTransactionInfo(
       id: "15594178869593306621",
-      amount: 100000000,
+      amount: Money.fromInt(100000000, CryptoCurrency.xtm),
       date: DateTime.utc(2026),
       direction: TransactionDirection.incoming,
       isPending: true,

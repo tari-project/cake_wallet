@@ -1,77 +1,40 @@
-import 'package:cake_wallet/generated/i18n.dart';
-import 'package:cake_wallet/src/screens/seed/wallet_seed_page.dart';
-import 'package:cake_wallet/src/widgets/seedphrase_grid_widget.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
+import "package:cake_wallet/generated/i18n.dart";
+import "package:cake_wallet/src/screens/seed/wallet_seed_page.dart";
+import "package:flutter_test/flutter_test.dart";
 
-import '../components/common_test_cases.dart';
+import "../core/base_robot.dart";
 
-class WalletSeedPageRobot {
-  WalletSeedPageRobot(this.tester) : commonTestCases = CommonTestCases(tester);
+class WalletSeedPageRobot extends BaseRobot {
+  WalletSeedPageRobot(super.tester);
 
-  final WidgetTester tester;
-  late CommonTestCases commonTestCases;
-
-  Future<void> isWalletSeedPage() async {
-    await commonTestCases.isSpecificPage<WalletSeedPage>();
-    await commonTestCases.takeScreenshots('wallet_seed_page');
+  @override
+  Future<void> isDisplayed() async {
+    await isSpecificPage<WalletSeedPage>();
   }
 
   Future<void> onVerifySeedButtonPressed() async {
-    await commonTestCases.tapItemByKey('wallet_seed_page_verify_seed_button_key');
-    await commonTestCases.defaultSleepTime();
+    await tapByKey("wallet_seed_page_verify_seed_button_key");
   }
 
-  Future<void> onSaveSeedButtonPressed() async {
-    await commonTestCases.tapItemByKey('wallet_seed_page_save_seeds_button_key');
-    await commonTestCases.defaultSleepTime();
-  }
-
-  Future<void> onConfirmButtonOnSeedAlertDialogPressed() async {
-    await commonTestCases.tapItemByKey('wallet_seed_page_seed_alert_confirm_button_key');
-    await commonTestCases.defaultSleepTime();
-  }
-
-  Future<void> onBackButtonOnSeedAlertDialogPressed() async {
-    await commonTestCases.tapItemByKey('wallet_seed_page_seed_alert_back_button_key');
-    await commonTestCases.defaultSleepTime();
-  }
-
-  Future<void> confirmWalletDetailsDisplayCorrectly() async {
+  void confirmWalletDetailsDisplayCorrectly() {
     final walletSeedPage = tester.widget<WalletSeedPage>(find.byType(WalletSeedPage));
 
     final walletSeedViewModel = walletSeedPage.walletSeedViewModel;
 
     final walletName = walletSeedViewModel.name;
     final walletSeeds = walletSeedViewModel.seedSplit;
-    commonTestCases.hasText(walletName);
-    final scrollable = find.descendant(
-      of: find.byType(SeedPhraseGridWidget),
-      matching: find.byType(Scrollable),
-    );
-    for (final (index, seed) in walletSeeds.indexed) {
-      // GridView lazily builds later rows in small desktop/mobile windows.
-      // Use the unique row number: words can repeat and may not be built yet.
-      final number = find.descendant(
-        of: find.byType(SeedPhraseGridWidget),
-        matching: find.text('${index + 1}'),
+    hasText(walletName);
+
+    for (var index = 0; index < walletSeeds.length; index++) {
+      expect(
+        tester.any(find.text(walletSeeds[index])),
+        true,
+        reason: "The seed page did not show seed word ${index + 1}",
       );
-      await tester.scrollUntilVisible(number, 100, scrollable: scrollable);
-      commonTestCases.hasTextAtLestOnce(seed);
     }
   }
 
   void confirmWalletSeedReminderDisplays() {
-    commonTestCases.hasText(S.current.cake_seeds_save_disclaimer);
-  }
-
-  Future<void> onSaveSeedsButtonPressed() async {
-    await commonTestCases.tapItemByKey('wallet_seed_page_save_seeds_button_key');
-    await commonTestCases.defaultSleepTime();
-  }
-
-  Future<void> onCopySeedsButtonPressed() async {
-    await commonTestCases.tapItemByKey('wallet_seed_page_copy_seeds_button_key');
-    await commonTestCases.defaultSleepTime();
+    hasText(S.current.cake_seeds_save_disclaimer);
   }
 }
