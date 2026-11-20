@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:blockchain_utils/hex/hex.dart';
 import "package:cw_core/exceptions/cake_exception.dart";
 import 'package:cw_core/node_list.dart';
+import 'package:cw_core/minotari_node_response.dart';
 import 'package:cw_core/utils/print_verbose.dart';
 import 'package:cw_core/utils/proxy_socket/abstract.dart';
 import 'package:cw_core/utils/proxy_wrapper.dart';
@@ -553,7 +554,7 @@ class Node {
       final response = await ProxyWrapper()
           .get(clearnetUri: uri.replace(path: '${uri.path}/get_tip_info'.replaceAll('//', '/')))
           .timeout(Duration(seconds: 10));
-      return response.statusCode == 200;
+      return response.statusCode == 200 && isMinotariTipResponse(response.body);
     } catch (e) {
       printV("error: $e");
       return false;

@@ -1,3 +1,4 @@
+import 'package:blockchain_utils/blockchain_utils.dart' show Bip39Languages;
 import 'package:cake_wallet/bitcoin/bitcoin.dart';
 import 'package:cake_wallet/core/validator.dart';
 import 'package:cake_wallet/entities/mnemonic_item.dart';
@@ -57,7 +58,7 @@ class SeedValidator extends Validator<MnemonicItem> {
       case WalletType.zcash:
         return zcash!.getZcashWordList(language);
       case WalletType.minotari:
-        return getBitcoinWordList(language);
+        return Bip39Languages.english.wordList;
       case WalletType.none:
       case WalletType.haven:
         return [];

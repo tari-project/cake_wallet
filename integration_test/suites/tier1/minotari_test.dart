@@ -17,6 +17,7 @@ import "package:cw_core/wallet_service.dart";
 import "package:cw_core/wallet_type.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:integration_test/integration_test.dart";
+import "package:mobx/mobx.dart";
 
 import "../../core/app_launcher.dart";
 import "../../core/test_config.dart";
@@ -25,10 +26,12 @@ import "../../core/test_wallets.dart";
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  // Mainnet against the default node. Only the spending flows need funds.
+  // The release library supports mainnet. The first create/restore flow generates
+  // its own unfunded seed; a persistent fixture is only needed for the history flows.
   integrationTest("Minotari wallet flows", (tester) async {
-    if (minotari == null || TestWallets.seedFor(WalletType.minotari).trim().isEmpty) {
-      tester.printToConsole("Minotari test wallet secrets missing, skipped");
+    final integration = minotari;
+    if (integration == null) {
+      tester.printToConsole("Minotari is disabled in this build, skipped");
       return;
     }
 
@@ -40,18 +43,74 @@ void main() {
         getIt.get<WalletNewVM>(param1: NewWalletArguments(type: WalletType.minotari));
     await newWalletVM.create();
     _expectCreated(newWalletVM);
-    expect(appStore.wallet!.walletInfo.network, "mainNet");
+    final created = appStore.wallet!;
+    expect(created.walletInfo.network, "mainNet");
+    expect(created.balance[CryptoCurrency.xtm]!.available.amount, BigInt.zero);
+    final address = created.walletAddresses.address;
+    final seed = await integration.getSeed(created);
+    expect(seed, isNotNull);
+    expect(seed!.split(" ").length, 24);
 
-    tester.printToConsole("Restore from seed and check the receive address");
+    tester.printToConsole("Restore the wallet just created and verify its balance");
+    await _removeTestWallet(created);
     await _restore(WalletRestoreMode.seed, {
-      "name": "minotari_seed_restore",
-      "seed": TestWallets.seedFor(WalletType.minotari),
+      "name": "xtm_restore_${DateTime.now().microsecondsSinceEpoch}",
+      "seed": seed,
     });
-    expect(appStore.wallet!.walletAddresses.address,
-        TestWallets.receiveAddressFor(WalletType.minotari));
+    final unfundedRestore = appStore.wallet!;
+    expect(unfundedRestore.walletAddresses.address, address);
+    expect(unfundedRestore.balance[CryptoCurrency.xtm]!.available.amount, BigInt.zero);
+
+    final fixtureSeed = TestWallets.seedFor(WalletType.minotari);
+    if (fixtureSeed.trim().isEmpty) {
+      tester.printToConsole("Minotari history fixture missing, create/restore checks passed");
+      return;
+    }
+
+    tester.printToConsole("Restore from seed and check history presentation through completion");
+    final missingPreviews = <String>{};
+    final stopWatchingRestore = autorun((_) {
+      final restored = appStore.wallet;
+      if (restored == null ||
+          restored.name != "minotari_seed_restore" ||
+          !restored.walletInfo.isRecovery ||
+          restored.syncStatus is SyncedSyncStatus) {
+        return;
+      }
+      for (final tx in restored.transactionHistory.transactions.values) {
+        if (tx.additionalInfo["status"] == "unconfirmed" &&
+            (tx.height ?? 0) > 0 &&
+            tx.additionalInfo["restoringHistory"] != true) {
+          missingPreviews.add(tx.id);
+        }
+      }
+    });
+    try {
+      await _restore(WalletRestoreMode.seed, {
+        "name": "minotari_seed_restore",
+        "seed": fixtureSeed,
+      });
+      final restored = appStore.wallet!;
+      expect(restored.walletAddresses.address, TestWallets.receiveAddressFor(WalletType.minotari));
+      await _waitForSynced(tester, restored);
+      final deadline = DateTime.now().add(TestConfig.walletSyncBudget);
+      while (restored.walletInfo.isRecovery && DateTime.now().isBefore(deadline)) {
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+      expect(restored.walletInfo.isRecovery, isFalse);
+      expect(missingPreviews, isEmpty,
+          reason: "Committed block events must use the wallet recovery state for history previews");
+      expect(
+          restored.transactionHistory.transactions.values
+              .every((tx) => tx.additionalInfo["restoringHistory"] == false),
+          isTrue);
+    } finally {
+      stopWatchingRestore();
+    }
 
     tester.printToConsole("Restore from spend and view keys");
     final restoreHeight = int.parse(TestWallets.minotariRestoreHeight);
+    await _removeTestWallet(appStore.wallet!);
     await _restore(WalletRestoreMode.keys, {
       "name": "minotari_keys_restore",
       "viewKey": TestWallets.minotariViewKey,
@@ -105,6 +164,12 @@ void main() {
     expect(reopened.walletAddresses.address, TestWallets.receiveAddressFor(WalletType.minotari));
     await reopened.close();
   });
+}
+
+// Minotari stores a unique fingerprint for each account in its shared database.
+Future<void> _removeTestWallet(WalletBase wallet) async {
+  await wallet.close();
+  await getIt.get<WalletService>(param1: WalletType.minotari).remove(wallet.name);
 }
 
 Future<void> _restore(WalletRestoreMode mode, Map<String, dynamic> options) async {

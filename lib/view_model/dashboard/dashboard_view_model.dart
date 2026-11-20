@@ -5,6 +5,7 @@ import 'dart:io' show Platform;
 import 'package:cake_wallet/.secrets.g.dart' as secrets;
 import 'package:cake_wallet/bitcoin/bitcoin.dart';
 import 'package:cake_wallet/core/key_service.dart';
+import 'package:cake_wallet/core/background_sync_session.dart';
 import 'package:cake_wallet/view_model/dashboard/minotari_transaction_status.dart';
 import 'package:cake_wallet/view_model/wallet_account_list/wallet_account_list_view_model.dart';
 import 'package:cake_wallet/view_model/wallet_account_list/account_list_item.dart';
@@ -1165,6 +1166,7 @@ abstract class DashboardViewModelBase with Store {
 
   @action
   Future<void> disableBackgroundSync() async {
+    if (Platform.isAndroid) await BackgroundSyncSession().cancelActive();
     final resp = await FlutterDaemon().stopBackgroundSync();
     printV("Background sync disabled: $resp");
     backgroundSyncEnabled = false;

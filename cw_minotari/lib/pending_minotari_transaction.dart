@@ -20,9 +20,8 @@ class PendingMinotariTransaction with PendingTransaction {
   /// Broadcasts the send and returns cw's id of the recorded transaction, if cw reported one.
   final Future<String?> Function() send;
 
-  /// A send is built at its quote's rate, but the quote sizes a plain output and picks inputs at
-  /// the Fast rate, so the paid fee can differ slightly (a payment id, another input). A
-  /// send-all's quote is exact.
+  /// The quote is an upper bound on the signed kernel fee. Native code refuses
+  /// any increase before broadcast, so a changed input selection needs a new quote.
   @override
   final bool isFeeEstimate;
 

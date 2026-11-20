@@ -1,3 +1,4 @@
+import 'package:cake_wallet/view_model/dashboard/minotari_transaction_status.dart';
 import 'package:cake_wallet/entities/balance_display_mode.dart';
 import 'package:cake_wallet/entities/fiat_currency.dart';
 import 'package:cake_wallet/evm/evm.dart';
@@ -55,6 +56,17 @@ class TransactionListItem extends ActionListItem with Keyable {
   }
 
   String get formattedTitle {
+    if (balanceViewModel.wallet.type == WalletType.minotari) {
+      if (const {'locked', 'cancelled', 'rejected', 'reorganized'}
+          .contains(transaction.additionalInfo['status'])) {
+        return minotariTransactionStatus(transaction);
+      }
+      if (transaction.additionalInfo['restoringHistory'] == true) {
+        return transaction.direction == TransactionDirection.incoming
+            ? S.current.received
+            : S.current.sent;
+      }
+    }
 
     if (transaction.additionalInfo['isIronwoodMigration'] == true) {
       return 'Migration';
@@ -88,6 +100,7 @@ class TransactionListItem extends ActionListItem with Keyable {
       case WalletType.haven:
       case WalletType.zano:
         return 10;
+      case WalletType.minotari:
       case WalletType.wownero:
         return 3;
       case WalletType.litecoin:
@@ -109,6 +122,7 @@ class TransactionListItem extends ActionListItem with Keyable {
           return ' (${transaction.confirmations}/10)';
         }
         break;
+      case WalletType.minotari:
       case WalletType.wownero:
         if (transaction.confirmations >= 0 && transaction.confirmations < 3) {
           return ' (${transaction.confirmations}/3)';
@@ -148,6 +162,7 @@ class TransactionListItem extends ActionListItem with Keyable {
       WalletType.wownero,
       WalletType.litecoin,
       WalletType.zano,
+      WalletType.minotari,
     ].contains(balanceViewModel.wallet.type)) {
       return formattedPendingStatus;
     }

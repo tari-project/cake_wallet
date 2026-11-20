@@ -179,7 +179,8 @@ class _TransactionDetailsModalState extends State<TransactionDetailsModal> {
                                 Observer(
                                   builder: (_) => NewListSections(
                                     sections: {
-                                      "view tx": [
+                                      if (widget.transactionDetailsViewModel.hasExplorer)
+                                        "view tx": [
                                         ListItemRegularRow(
                                           keyValue: "view tx on",
                                           label: widget

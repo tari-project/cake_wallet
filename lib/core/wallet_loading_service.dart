@@ -76,6 +76,9 @@ class WalletLoadingService {
 
       return wallet;
     } catch (error, stack) {
+      // A headless job must fail this wallet without opening a different one,
+      // changing the user's selection, or attempting foreground seed recovery.
+      if (isBackground) rethrow;
       String corruptedWalletsSeeds = "Corrupted wallets seeds (if retrievable, empty otherwise):";
 
       if (error is WalletDeprecationException) {

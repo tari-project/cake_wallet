@@ -77,12 +77,12 @@ class NodeFormState extends State<NodeForm> {
                     label: S.current.node_address,
                     initialValue: vm.address,
                     validator: switch (vm.walletType) {
-                      WalletType.decred => NodeAddressValidatorDecredBlankException(),
+                      WalletType.decred => NodeAddressValidatorDecredBlankException().call,
                       // Minotari node traffic carries the wallet's own transactions.
                       WalletType.minotari => (value) => vm.useSSL
                           ? NodeAddressValidator()(value)
                           : S.current.minotari_node_requires_ssl,
-                      _ => NodeAddressValidator(),
+                      _ => NodeAddressValidator().call,
                     },
                   ),
                   if (vm.hasPathSupport)

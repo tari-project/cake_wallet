@@ -196,15 +196,16 @@ class MinotariFfi {
 
   /// Sends to [recipients], or sweeps the wallet to the single recipient when [sendAll], at
   /// [feePerGram] µT per gram (the rate of the quote the user confirmed). The final Broadcasted
-  /// event carries the send's result.
+  /// event carries the send's result. A signed fee above [maxFee] fails before broadcast.
   Stream<send_tx.SendTransactionEvent> sendTransaction({
     required List<send_tx.SendRecipient> recipients,
     required bool sendAll,
     required String baseNodeUrl,
     required BigInt feePerGram,
+    required BigInt maxFee,
     String? conflictsWithTransactionId,
   }) =>
-      send_tx.sendTransactionAtFee(
+      send_tx.sendTransactionAtFeeLimit(
         details: sendDetails(
           recipients: recipients,
           sendAll: sendAll,
@@ -212,6 +213,7 @@ class MinotariFfi {
           conflictsWithTransactionId: conflictsWithTransactionId,
         ),
         feePerGram: feePerGram,
+        maxFee: maxFee,
       );
 
   /// What [sendTransaction] sends. With [conflictsWithTransactionId] (an abandoned send's id)
@@ -259,6 +261,22 @@ class MinotariFfi {
         walletName: walletName,
       );
 
+  Future<fee.FeeEstimate> estimateSendFee({
+    required List<send_tx.SendRecipient> recipients,
+    required fee.FeePriority priority,
+    required String baseNodeUrl,
+    String? conflictsWithTransactionId,
+  }) =>
+      send_tx.estimateSendFee(
+        details: sendDetails(
+          recipients: recipients,
+          sendAll: false,
+          baseNodeUrl: baseNodeUrl,
+          conflictsWithTransactionId: conflictsWithTransactionId,
+        ),
+        priority: priority,
+      );
+
   /// The node's fee per gram for [priority], capped by cw; reads no wallet data.
   Future<BigInt> feePerGram({
     required fee.FeePriority priority,
@@ -269,10 +287,12 @@ class MinotariFfi {
   Future<fee.SendAllFeeEstimate> estimateSendAllFee({
     required String recipientAddress,
     required BigInt feePerGram,
+    String? paymentId,
   }) =>
       fee.estimateSendAllFeeAt(
         walletName: walletName,
         recipientAddress: recipientAddress,
+        paymentId: paymentId,
         network: network,
         feePerGram: feePerGram,
       );

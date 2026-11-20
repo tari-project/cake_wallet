@@ -170,6 +170,11 @@ class CardDesign {
 
   static const robinhood = CardDesign(imagePath: "assets/new-ui/balance_card_icons/robinhood.svg");
 
+  static const xtm = CardDesign(
+    gradient: gradientBlue,
+    imagePath: "assets/new-ui/balance_card_icons/minotari.svg",
+  );
+
   static const ethSpecial = CardDesign(
       gradient: const LinearGradient(
           colors: <Color>[Color(0xFF6259FF), Color(0xFF3B20E6)],
@@ -389,6 +394,13 @@ class CardDesign {
   };
 
   static List<CardIconPath> iconPathsForWalletType(CryptoCurrency currency) {
+    if (currency == CryptoCurrency.xtm) {
+      return [
+        CardIconPath(xtm.imagePath),
+        CardIconPath(CryptoCurrency.xtm.iconPath!, preColored: true),
+        const CardIconPath(_genericCakeIcon),
+      ];
+    }
     final n = _iconNames[currency];
     if (n == null) return const [];
 
@@ -437,6 +449,7 @@ class CardDesign {
     zecSpecial,
     bnbSpecial,
     robinhoodSpecial,
+    xtm,
   ];
 
   static CardDesign forCurrencySpecial(CryptoCurrency currency) {
@@ -467,6 +480,7 @@ class CardDesign {
     CryptoCurrency.dcr: dcr,
     CryptoCurrency.bnb: bnb,
     CryptoCurrency.robEth: robinhood,
+    CryptoCurrency.xtm: xtm,
   };
 
   static const Map<CryptoCurrency, CardDesign> specialDesignsForCurrencies = {
@@ -489,6 +503,7 @@ class CardDesign {
     CryptoCurrency.zec: zecSpecial,
     CryptoCurrency.bnb: bnbSpecial,
     CryptoCurrency.robEth: robinhoodSpecial,
+    CryptoCurrency.xtm: xtm,
   };
 
   static Map<Gradient, CardColorCombination> preferredColorCombinations = {

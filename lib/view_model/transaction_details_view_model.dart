@@ -60,14 +60,16 @@ bool hasLightningPreimage(TransactionInfo tx) => (tx.additionalInfo["preimage"] 
 
 bool _hasMinotariCounterparty(TransactionDetailsViewModelBase vm) =>
     vm.wallet.type == WalletType.minotari &&
-    vm.transactionInfo.additionalInfo["counterpartyAddress"] != null;
+    (vm.transactionInfo.additionalInfo["counterpartyAddress"] as String?)?.isNotEmpty == true;
 
-/// Minotari surfaces the counterparty as an address plus an optional emoji ID.
-String _minotariCounterparty(TransactionDetailsViewModelBase vm) {
-  final address = vm.transactionInfo.additionalInfo["counterpartyAddress"] as String? ?? "";
-  final emoji = vm.transactionInfo.additionalInfo["counterpartyEmoji"] as String?;
-  return emoji != null ? "$emoji $address" : address;
-}
+bool _duplicatesMinotariRecipient(TransactionDetailsViewModelBase vm, String? address) =>
+    _hasMinotariCounterparty(vm) &&
+    vm.transactionInfo.direction == TransactionDirection.outgoing &&
+    address?.trim() == _minotariCounterparty(vm).trim();
+
+/// The Base58 address shown and copied in transaction details.
+String _minotariCounterparty(TransactionDetailsViewModelBase vm) =>
+    vm.transactionInfo.additionalInfo["counterpartyAddress"] as String? ?? "";
 
 String _minotariInfo(TransactionDetailsViewModelBase vm, String field) =>
     vm.transactionInfo.additionalInfo[field] as String? ?? "";
@@ -215,6 +217,7 @@ class TxDetailRowDefinition {
       },
       applicable: (vm) =>
           vm.showRecipientAddress &&
+          !_duplicatesMinotariRecipient(vm, vm.transactionInfo.to) &&
           (vm.transactionInfo.to != null ||
               [WalletType.monero, WalletType.tron].contains(vm.wallet.type) ||
               vm.wallet.type == WalletType.bitcoin &&
@@ -345,7 +348,8 @@ abstract class TransactionDetailsViewModelBase with Store {
     if (showRecipientAddress && !isRecipientAddressShown) {
       final recipientAddress = description.recipientAddress;
 
-      if (recipientAddress?.isNotEmpty ?? false) {
+      if ((recipientAddress?.isNotEmpty ?? false) &&
+          !_duplicatesMinotariRecipient(this, recipientAddress)) {
         final recipientAddressForDisplay =
             _moneroRecipientAddressForDisplay(recipientAddress!, wallet.type);
         items.add(
@@ -377,8 +381,8 @@ abstract class TransactionDetailsViewModelBase with Store {
 
   String get note {
     final descriptionKey = "${transactionInfo.txHash}_${wallet.walletAddresses.primaryAddress}";
-    final description = transactionDescriptionBox.values
-      .firstWhereOrNull((val) => val.id == descriptionKey || val.id == transactionInfo.txHash,
+    final description = transactionDescriptionBox.values.firstWhereOrNull(
+      (val) => val.id == descriptionKey || val.id == transactionInfo.txHash,
     );
     return description?.transactionNote ?? "";
   }
@@ -492,6 +496,7 @@ abstract class TransactionDetailsViewModelBase with Store {
       case WalletType.haven:
       case WalletType.zano:
         return 10;
+      case WalletType.minotari:
       case WalletType.wownero:
         return 3;
       case WalletType.litecoin:
@@ -578,7 +583,8 @@ abstract class TransactionDetailsViewModelBase with Store {
       case WalletType.zcash:
         return "https://blockchair.com/zcash/transaction/${txId}";
       case WalletType.minotari:
-        return 'https://explore.tari.com/search?hash=${txId}';
+        if (isMinotariFailedTransaction(transactionInfo)) return '';
+        return transactionInfo.additionalInfo['explorerUrl'] as String? ?? '';
       case WalletType.none:
         return "";
     }
@@ -586,7 +592,10 @@ abstract class TransactionDetailsViewModelBase with Store {
 
   String get explorerDescription => S.current.view_transaction_on + Uri.parse(_explorerUrl).host;
 
+  bool get hasExplorer => wallet.type != WalletType.minotari || _explorerUrl.isNotEmpty;
+
   void launchExplorer() {
+    if (!hasExplorer) return;
     launchUrl(Uri.parse(_explorerUrl), mode: LaunchMode.externalApplication);
   }
 

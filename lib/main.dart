@@ -7,6 +7,7 @@ import 'package:cake_wallet/app_scroll_behavior.dart';
 import "package:cake_wallet/ci_build_overlay.dart";
 import 'package:cake_wallet/core/auth_service.dart';
 import 'package:cake_wallet/core/background_sync.dart';
+import 'package:cake_wallet/core/background_sync_session.dart';
 import 'package:cake_wallet/core/node_switching_service.dart';
 import 'package:cake_wallet/core/reset_service.dart';
 import 'package:cake_wallet/core/secure_storage.dart';
@@ -143,7 +144,11 @@ Future<void> runAppWithZone({Key? topLevelKey}) async {
       return true;
     };
 
-    await FlutterDaemon().unmarkBackgroundSync();
+    if (Platform.isAndroid) {
+      await BackgroundSyncSession().cancelActive();
+    } else {
+      await FlutterDaemon().unmarkBackgroundSync();
+    }
     await initDb();
 
     try {
@@ -533,6 +538,7 @@ class TopLevelErrorWidget extends StatelessWidget {
 
 @pragma('vm:entry-point')
 Future<void> backgroundSync() async {
+  final session = Platform.isAndroid ? BackgroundSyncSession() : null;
   bool shouldUnmark = false;
   try {
     printV("Background sync triggered");
@@ -540,22 +546,29 @@ Future<void> backgroundSync() async {
     WidgetsFlutterBinding.ensureInitialized();
     printV("- DartPluginRegistrant.ensureInitialized()");
     DartPluginRegistrant.ensureInitialized();
-    printV("- FlutterDaemon.markBackgroundSync()");
-    final val = await FlutterDaemon().markBackgroundSync();
-    if (val) {
+    final alreadyRunning = session != null
+        ? !session.begin()
+        : await FlutterDaemon().markBackgroundSync();
+    if (alreadyRunning) {
       printV("Background sync already in progress");
       return;
     }
     shouldUnmark = true;
     printV("Starting background sync");
-    final backgroundSync = BackgroundSync();
+    setRootDirFromEnv();
+    await initDb();
+    final backgroundSync = BackgroundSync(isCancelled: () => session?.cancelled ?? false);
     await initializeAppConfigs(loadWallet: false);
     await backgroundSync.sync();
     printV("Background sync completed");
   } finally {
     if (shouldUnmark) {
       printV("Unmarking background sync");
-      await FlutterDaemon().unmarkBackgroundSync();
+      if (session != null) {
+        await session.complete();
+      } else {
+        await FlutterDaemon().unmarkBackgroundSync();
+      }
     } else {
       printV("Not unmarking background sync");
     }

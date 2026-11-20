@@ -81,6 +81,7 @@ class RootState extends State<Root> with WidgetsBindingObserver {
 
     widget.authService.requireAuth().then((value) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         setState(() => _requestAuth = value);
       });
     });
@@ -95,6 +96,7 @@ class RootState extends State<Root> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     stream?.cancel();
     _walletReactionDisposer?.call();
     _deepLinksReactionDisposer?.call();
